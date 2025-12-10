@@ -1,7 +1,7 @@
 import type { ModuleFrontend, ModuleManifest, ModuleSlot } from "./types";
 
 /**
- * Automatically collect all frontend modules from src/modules/*/index.tsx
+ * Automatically collect all frontend modules from src/modules/.../index.tsx
  * (intended to run with Vite/webpack).
  */
 const frontendModules = import.meta.glob("../modules/*/index.tsx", {

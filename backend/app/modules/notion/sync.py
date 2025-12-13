@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from flask import current_app
 
@@ -100,7 +100,7 @@ def _row_from_page(page: Dict[str, any], property_map: Dict[str, Dict[str, str]]
     return row
 
 
-def run_full_sync() -> SyncResult:
+def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None) -> SyncResult:
     start_time = time.time()
     settings = _load_settings()
     token = settings.get("notion_api_key")
@@ -188,23 +188,31 @@ def run_full_sync() -> SyncResult:
     repo.ensure_wide_table(property_map)
 
     try:
-        for page in query_iter:
-            fetched_count += 1
-            repo.upsert_page_raw(
-                page_id=page.get("id"),
-                raw_json=page,
-                last_edited_time=page.get("last_edited_time"),
-                created_time=page.get("created_time"),
-                archived=page.get("archived", False),
-                synced_at=datetime.utcnow().isoformat() + "Z",
-            )
-            row_data = _row_from_page(page, property_map)
-            repo.upsert_row(row_data)
-            upserted_count += 1
+        pages = list(query_iter)
     except PermissionError as exc:
         return _result(False, f"Zugriff verweigert beim Lesen aus {source_label}: {exc}")
     except Exception as exc:
         return _result(False, f"Fehler während des Syncs aus {source_label}: {exc}")
+
+    total_pages = len(pages)
+    if progress_callback:
+        progress_callback(0, total_pages)
+
+    for page in pages:
+        fetched_count += 1
+        repo.upsert_page_raw(
+            page_id=page.get("id"),
+            raw_json=page,
+            last_edited_time=page.get("last_edited_time"),
+            created_time=page.get("created_time"),
+            archived=page.get("archived", False),
+            synced_at=datetime.utcnow().isoformat() + "Z",
+        )
+        row_data = _row_from_page(page, property_map)
+        repo.upsert_row(row_data)
+        upserted_count += 1
+        if progress_callback:
+            progress_callback(upserted_count, total_pages)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     repo.set_meta("last_full_sync", now_iso)

@@ -83,9 +83,12 @@ class NotionClient:
             parts.append(text)
         return "".join(parts).strip()
 
-    def query_database(
+    def retrieve_database(self, database_id: str) -> dict:
+        return self._request("GET", f"/databases/{database_id}")
+
+    def query_data_source(
         self,
-        database_id: str,
+        data_source_id: str,
         filter_obj: Optional[dict] = None,
         sorts: Optional[List[dict]] = None,
         start_cursor: Optional[str] = None,
@@ -100,7 +103,7 @@ class NotionClient:
             payload["start_cursor"] = start_cursor
 
         while True:
-            data = self._request("POST", f"/databases/{database_id}/query", json=payload)
+            data = self._request("POST", f"/data_sources/{data_source_id}/query", json=payload)
             for result in data.get("results", []):
                 yield result
 

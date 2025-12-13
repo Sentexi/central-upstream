@@ -44,21 +44,76 @@ def _ensure_database_id(client: NotionClient, repo: NotionRepository, db_name: s
     return database_id
 
 
+def _ensure_data_source_id(
+    client: NotionClient, repo: NotionRepository, database_id: str, preferred_name: Optional[str] = None
+) -> str:
+    data_source_id = repo.get_meta("data_source_id")
+    if data_source_id:
+        return data_source_id
+
+    database = client.retrieve_database(database_id)
+    data_sources = database.get("data_sources") or []
+    if not data_sources:
+        raise RuntimeError("Keine Data Sources für die Notion Database gefunden.")
+
+    stored_name = repo.get_meta("data_source_name")
+    preferred = preferred_name or stored_name or repo.get_meta("database_name")
+
+    chosen = None
+    if len(data_sources) == 1:
+        chosen = data_sources[0]
+    else:
+        if preferred:
+            chosen = next(
+                (item for item in data_sources if item.get("name") and item.get("name") == preferred), None
+            )
+            if not chosen:
+                chosen = next(
+                    (
+                        item
+                        for item in data_sources
+                        if item.get("name") and preferred and item.get("name").lower() == preferred.lower()
+                    ),
+                    None,
+                )
+        if not chosen:
+            names = ", ".join([item.get("name") or "<ohne Name>" for item in data_sources])
+            raise RuntimeError(
+                "Mehrere Data Sources gefunden. Wähle eine per name oder speichere data_source_id in notion_meta (" + names + ")."
+            )
+
+    data_source_id = chosen.get("id")
+    if not data_source_id:
+        raise RuntimeError("Gewählte Data Source enthält keine ID.")
+
+    repo.set_meta("data_source_id", data_source_id)
+    if chosen.get("name"):
+        repo.set_meta("data_source_name", chosen.get("name"))
+    return data_source_id
+
+
+DEFAULT_NOTION_VERSION = "2025-09-03"
+
+
 def sync_notion_database(force_full: bool = False) -> SyncResult:
     start_time = time.time()
     settings = _load_settings()
     token = settings.get("notion_api_key")
     db_name = settings.get("notion_db_name")
     base_url = settings.get("notion_api_base_url", "https://api.notion.com/v1")
-    version = settings.get("notion_api_version", "2022-06-28")
+    version = settings.get("notion_api_version") or DEFAULT_NOTION_VERSION
+    if version != DEFAULT_NOTION_VERSION:
+        version = DEFAULT_NOTION_VERSION
     if not token or not db_name:
         return SyncResult(ok=False, error="Notion Settings unvollständig", mode="none", fetched_count=0, upserted_count=0, duration_ms=0)
 
     repo = _get_repository()
     client = NotionClient(token, base_url, version)
+    preferred_data_source_name = settings.get("notion_data_source_name")
 
     try:
         database_id = _ensure_database_id(client, repo, db_name)
+        data_source_id = _ensure_data_source_id(client, repo, database_id, preferred_name=preferred_data_source_name)
     except PermissionError as exc:
         return SyncResult(ok=False, error=str(exc), mode="none", fetched_count=0, upserted_count=0, duration_ms=0)
     except Exception as exc:
@@ -85,12 +140,12 @@ def sync_notion_database(force_full: bool = False) -> SyncResult:
     property_map = json.loads(property_map_json) if property_map_json else {}
 
     try:
-        for page in client.query_database(database_id, filter_obj=filter_obj, sorts=sorts):
+        for page in client.query_data_source(data_source_id, filter_obj=filter_obj, sorts=sorts):
             fetched_count += 1
             task = normalize_task(page, property_map)
             repo.upsert_page_raw(
                 page_id=page.get("id"),
-                database_id=database_id,
+                database_id=data_source_id,
                 raw_json=page,
                 last_edited_time=page.get("last_edited_time"),
                 created_time=page.get("created_time"),

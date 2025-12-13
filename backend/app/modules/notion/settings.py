@@ -24,6 +24,13 @@ class NotionSettingsProvider(ModuleSettingsProvider):
                 "help_text": "Eindeutiger Name der Notion Datenbank (für Lookup).",
             },
             {
+                "key": "notion_data_source_name",
+                "label": "Data Source Name",
+                "type": "string",
+                "required": False,
+                "help_text": "Optional: Name der Data Source, wenn eine Database mehrere Tabellen enthält.",
+            },
+            {
                 "key": "notion_api_base_url",
                 "label": "API Base URL",
                 "type": "string",
@@ -35,7 +42,7 @@ class NotionSettingsProvider(ModuleSettingsProvider):
                 "label": "API Version",
                 "type": "string",
                 "required": False,
-                "default": "2022-06-28",
+                "default": "2025-09-03",
             },
             {
                 "key": "sync_mode",
@@ -58,7 +65,7 @@ class NotionSettingsProvider(ModuleSettingsProvider):
 
         # Optional lightweight validation using search endpoint
         base_url = settings.get("notion_api_base_url", "https://api.notion.com/v1")
-        version = settings.get("notion_api_version", "2022-06-28")
+        version = settings.get("notion_api_version", "2025-09-03")
         try:
             resp = requests.post(
                 f"{base_url}/search",

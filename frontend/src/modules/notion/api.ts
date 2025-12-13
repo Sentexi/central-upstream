@@ -48,8 +48,18 @@ export async function triggerSync(force_full = false): Promise<SyncResult> {
     body: JSON.stringify({ force_full }),
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Sync failed");
+    const statusLabel = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+    let errorMessage = `Sync failed (${statusLabel})`;
+    const text = await res.text();
+    try {
+      const body = JSON.parse(text);
+      if (body?.error) errorMessage = `Sync failed: ${body.error}`;
+      else if (body?.message) errorMessage = `Sync failed: ${body.message}`;
+      else if (text) errorMessage = `Sync failed (${statusLabel}): ${text}`;
+    } catch (err) {
+      if (text) errorMessage = `Sync failed (${statusLabel}): ${text}`;
+    }
+    throw new Error(errorMessage);
   }
   return res.json();
 }

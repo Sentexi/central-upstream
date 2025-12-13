@@ -45,25 +45,25 @@ def _ensure_database_id(repo: NotionRepository, database_id: str) -> str:
     return database_id
 
 
-def _ensure_data_source_id(client: NotionClient, repo: NotionRepository, database_id: str) -> str:
-    stored_data_source_id = repo.get_meta("data_source_id")
-    if stored_data_source_id:
-        return stored_data_source_id
-
-    database = client.retrieve_database(database_id)
+def _select_data_source(database: Dict[str, any], repo: NotionRepository, desired_name: Optional[str] = None):
     data_sources = database.get("data_sources") or []
-    if not data_sources:
-        raise RuntimeError("Keine Data Sources für die Notion Database gefunden.")
+    stored_data_source_id = repo.get_meta("data_source_id")
 
-    chosen = data_sources[0]
-    data_source_id = chosen.get("id")
-    if not data_source_id:
-        raise RuntimeError("Gewählte Data Source enthält keine ID.")
+    if stored_data_source_id:
+        for entry in data_sources:
+            if entry.get("id") == stored_data_source_id:
+                return entry
 
-    repo.set_meta("data_source_id", data_source_id)
-    if chosen.get("name"):
-        repo.set_meta("data_source_name", chosen.get("name"))
-    return data_source_id
+    if desired_name:
+        for entry in data_sources:
+            if entry.get("name") == desired_name:
+                return entry
+        available_names = ", ".join(filter(None, [ds.get("name") for ds in data_sources])) or "keine"
+        raise RuntimeError(
+            f"Data Source '{desired_name}' nicht gefunden. Verfügbare Data Sources: {available_names}."
+        )
+
+    return data_sources[0] if data_sources else None
 
 
 def _build_property_map(properties: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
@@ -105,36 +105,90 @@ def run_full_sync() -> SyncResult:
     settings = _load_settings()
     token = settings.get("notion_api_key")
     database_id = settings.get("notion_database_id")
+    data_source_name = (settings.get("notion_data_source_name") or "").strip()
     base_url = settings.get("notion_api_base_url", "https://api.notion.com/v1")
     version = settings.get("notion_api_version") or DEFAULT_NOTION_VERSION
     version = DEFAULT_NOTION_VERSION if version != DEFAULT_NOTION_VERSION else version
 
-    if not token or not database_id:
-        return SyncResult(ok=False, error="Notion Settings unvollständig", fetched_count=0, upserted_count=0, duration_ms=0)
+    fetched_count = 0
+    upserted_count = 0
+
+    def _result(ok: bool, error: Optional[str] = None) -> SyncResult:
+        return SyncResult(
+            ok=ok,
+            mode="full",
+            fetched_count=fetched_count,
+            upserted_count=upserted_count,
+            duration_ms=int((time.time() - start_time) * 1000),
+            error=error,
+        )
+
+    missing_fields = []
+    if not token:
+        missing_fields.append("API Key")
+    if not database_id:
+        missing_fields.append("Database ID")
+    if missing_fields:
+        return _result(False, f"Notion Einstellungen unvollständig: {', '.join(missing_fields)} fehlen.")
 
     repo = _get_repository()
     client = NotionClient(token, base_url, version)
 
     try:
         database_id = _ensure_database_id(repo, database_id)
-        data_source_id = _ensure_data_source_id(client, repo, database_id)
-    except PermissionError as exc:
-        return SyncResult(ok=False, error=str(exc), fetched_count=0, upserted_count=0, duration_ms=0)
     except Exception as exc:
-        return SyncResult(ok=False, error=str(exc), fetched_count=0, upserted_count=0, duration_ms=0)
-
-    fetched_count = 0
-    upserted_count = 0
+        return _result(False, f"Fehler beim Prüfen der Database ID: {exc}")
 
     try:
-        data_source = client.retrieve_data_source(data_source_id)
-        properties = data_source.get("properties", {})
-        property_map = _build_property_map(properties)
-        repo.save_schema_json(properties)
-        repo.save_property_map(property_map)
-        repo.ensure_wide_table(property_map)
+        database = client.retrieve_database(database_id)
+    except PermissionError as exc:
+        return _result(False, f"Notion API Zugriff verweigert für Database {database_id}: {exc}")
+    except Exception as exc:
+        return _result(False, f"Fehler beim Laden der Notion Database {database_id}: {exc}")
 
-        for page in client.query_data_source(data_source_id):
+    if not data_source_name:
+        data_source_name = (repo.get_meta("data_source_name") or "").strip()
+
+    try:
+        chosen_data_source = _select_data_source(database, repo, data_source_name or None)
+    except Exception as exc:
+        return _result(False, str(exc))
+
+    using_data_source = bool(chosen_data_source and chosen_data_source.get("id"))
+    if chosen_data_source and not chosen_data_source.get("id"):
+        return _result(False, "Gewählte Data Source enthält keine ID.")
+
+    try:
+        if using_data_source:
+            data_source_id = chosen_data_source.get("id")
+            source_label = f"Data Source {chosen_data_source.get('name') or data_source_id}"
+            repo.set_meta("data_source_id", data_source_id)
+            if chosen_data_source.get("name"):
+                repo.set_meta("data_source_name", chosen_data_source.get("name"))
+
+            data_source = client.retrieve_data_source(data_source_id)
+            properties = data_source.get("properties", {})
+            query_iter = client.query_data_source(data_source_id)
+        else:
+            source_label = f"Database {database_id}"
+            repo.set_meta("data_source_id", "")
+            if chosen_data_source and chosen_data_source.get("name"):
+                repo.set_meta("data_source_name", chosen_data_source.get("name"))
+
+            properties = database.get("properties", {})
+            query_iter = client.query_database(database_id)
+    except PermissionError as exc:
+        return _result(False, f"Notion API Zugriff verweigert für {source_label}: {exc}")
+    except Exception as exc:
+        return _result(False, f"Fehler beim Vorbereiten des Sync ({source_label}): {exc}")
+
+    property_map = _build_property_map(properties)
+    repo.save_schema_json(properties)
+    repo.save_property_map(property_map)
+    repo.ensure_wide_table(property_map)
+
+    try:
+        for page in query_iter:
             fetched_count += 1
             repo.upsert_page_raw(
                 page_id=page.get("id"),
@@ -148,20 +202,13 @@ def run_full_sync() -> SyncResult:
             repo.upsert_row(row_data)
             upserted_count += 1
     except PermissionError as exc:
-        return SyncResult(ok=False, error=str(exc), fetched_count=fetched_count, upserted_count=upserted_count, duration_ms=int((time.time()-start_time)*1000))
+        return _result(False, f"Zugriff verweigert beim Lesen aus {source_label}: {exc}")
     except Exception as exc:
-        return SyncResult(ok=False, error=str(exc), fetched_count=fetched_count, upserted_count=upserted_count, duration_ms=int((time.time()-start_time)*1000))
+        return _result(False, f"Fehler während des Syncs aus {source_label}: {exc}")
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     repo.set_meta("last_full_sync", now_iso)
     repo.set_meta("last_incremental_sync", now_iso)
     repo.set_meta("notion_api_version", version)
 
-    duration_ms = int((time.time() - start_time) * 1000)
-    return SyncResult(
-        ok=True,
-        fetched_count=fetched_count,
-        upserted_count=upserted_count,
-        duration_ms=duration_ms,
-        error=None,
-    )
+    return _result(True, None)

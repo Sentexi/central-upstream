@@ -15,3 +15,23 @@ export interface ModuleFrontend {
   WorkWidget?: React.ComponentType;
   HealthWidget?: React.ComponentType;
 }
+
+export type SettingsFieldType = "string" | "password" | "boolean" | "select";
+
+export interface SettingsField {
+  key: string;
+  label: string;
+  type: SettingsFieldType;
+  required: boolean;
+  help_text?: string | null;
+  default?: unknown;
+  options?: { label: string; value: string }[];
+}
+
+export interface SettingsModuleSchema {
+  module_id: string;
+  module_name: string;
+  fields: SettingsField[];
+}
+
+export type SettingsValueMap = Record<string, Record<string, unknown>>;

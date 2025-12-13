@@ -32,11 +32,13 @@ def _get_repository() -> NotionRepository:
 
 
 def _ensure_database_id(repo: NotionRepository, database_id: str) -> str:
-    database_id = repo.get_meta("database_id")
-    if database_id:
-        return database_id
+    stored_database_id = repo.get_meta("database_id")
+    if stored_database_id:
+        return stored_database_id
+
     if not database_id:
         raise RuntimeError("Notion Database ID fehlt.")
+
     repo.set_meta("database_id", database_id)
     return database_id
 

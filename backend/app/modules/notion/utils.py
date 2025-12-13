@@ -108,9 +108,12 @@ def normalize_task(page: Dict[str, Any], property_map: Optional[Dict[str, str]] 
     priority = extract_select(properties, mapped_names(["Priority", "Prio"], "priority"))
     tags = extract_multi_select(properties, mapped_names(["Tags", "Labels"], "tags"))
 
+    parent = page.get("parent", {}) or {}
+    data_source_id = parent.get("data_source_id") or parent.get("database_id")
+
     task = {
         "id": page.get("id"),
-        "database_id": page.get("parent", {}).get("database_id"),
+        "database_id": data_source_id,
         "title": title or "",
         "status": status,
         "due_date": due_date,

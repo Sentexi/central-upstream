@@ -72,3 +72,4 @@ def extract_property_value(prop: Dict[str, Any], notion_type: str) -> Any:
     if notion_type in {"people", "relation", "files", "formula", "rollup"}:
         return json.dumps(prop.get(notion_type))
     return None
+

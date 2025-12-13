@@ -1,24 +1,36 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
-import { fetchFilters, fetchTodos, parseTags, triggerSync } from "./api";
-import type { NotionFilters, NotionTask, SyncResult } from "./types";
+import { fetchColumns, fetchRows, triggerSync } from "./api";
+import type { NotionColumn, NotionRow, SyncResult } from "./types";
 
-const SORT_OPTIONS = [
-  { value: "due_date_asc", label: "Due date ↑" },
-  { value: "due_date_desc", label: "Due date ↓" },
-  { value: "last_edited_desc", label: "Last edited" },
-  { value: "title_asc", label: "Title" },
-];
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (Array.isArray(value)) return value.map((v) => formatValue(v)).join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function renderCell(columnKey: string, value: unknown) {
+  if (typeof value === "string" && columnKey.toLowerCase().includes("url")) {
+    return (
+      <a href={value} target="_blank" rel="noreferrer">
+        {value}
+      </a>
+    );
+  }
+
+  return formatValue(value);
+}
 
 export function NotionTodosView() {
-  const [todos, setTodos] = useState<NotionTask[]>([]);
-  const [filters, setFilters] = useState<NotionFilters | null>(null);
+  const [columns, setColumns] = useState<NotionColumn[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
+  const [rows, setRows] = useState<NotionRow[]>([]);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [status, setStatus] = useState<string[]>([]);
-  const [project, setProject] = useState<string | undefined>();
-  const [area, setArea] = useState<string | undefined>();
-  const [sort, setSort] = useState("due_date_asc");
+  const [sortColumn, setSortColumn] = useState<string | undefined>();
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [offset, setOffset] = useState(0);
   const [limit] = useState(50);
   const [total, setTotal] = useState(0);
@@ -32,27 +44,36 @@ export function NotionTodosView() {
   }, [query]);
 
   useEffect(() => {
-    fetchFilters()
-      .then(setFilters)
-      .catch((err) => console.error("Failed to load filters", err));
+    fetchColumns()
+      .then((data) => {
+        const validColumns = data.filter((col): col is NotionColumn & { key: string } => Boolean(col.key));
+        setColumns(validColumns);
+        setVisibleColumns((prev) => (prev.length > 0 ? prev : validColumns.map((col) => col.key)));
+      })
+      .catch((err) => console.error("Failed to load columns", err));
   }, []);
 
+  const sort = useMemo(
+    () => (sortColumn ? `${sortColumn}:${sortDirection}` : undefined),
+    [sortColumn, sortDirection]
+  );
+
   const params = useMemo(
-    () => ({ q: debouncedQuery, status, project, area, sort, limit, offset }),
-    [debouncedQuery, status, project, area, sort, limit, offset]
+    () => ({ q: debouncedQuery, sort, limit, offset }),
+    [debouncedQuery, sort, limit, offset]
   );
 
   useEffect(() => {
     setLoading(true);
-    fetchTodos(params)
+    fetchRows(params)
       .then((data) => {
-        setTodos((prev) => (params.offset === 0 ? data.items : [...prev, ...data.items]));
+        setRows((prev) => (params.offset === 0 ? data.items : [...prev, ...data.items]));
         setTotal(data.total);
         setError(null);
       })
       .catch((err) => {
         console.error(err);
-        setError("Failed to load todos");
+        setError("Failed to load rows");
       })
       .finally(() => setLoading(false));
   }, [params]);
@@ -75,6 +96,14 @@ export function NotionTodosView() {
     }
   }
 
+  function toggleColumn(key: string) {
+    setVisibleColumns((prev) =>
+      prev.includes(key) ? prev.filter((col) => col !== key) : [...prev, key]
+    );
+  }
+
+  const visibleSet = useMemo(() => new Set(visibleColumns), [visibleColumns]);
+  const displayedColumns = columns.filter((col) => col.key && visibleSet.has(col.key));
   const hasMore = offset + limit < total;
 
   return (
@@ -82,7 +111,7 @@ export function NotionTodosView() {
       <div className="card-header">
         <div>
           <span className="kicker">Notion</span>
-          <h3 className="card-title">Notion ToDos</h3>
+          <h3 className="card-title">Notion Table View</h3>
         </div>
         <div className="actions">
           <button className="button secondary" type="button" onClick={() => handleSync(false)}>
@@ -97,66 +126,76 @@ export function NotionTodosView() {
       <div className="filters-grid">
         <input
           className="input"
-          placeholder="Search title"
+          placeholder="Search any text column"
           value={query}
           onChange={(e) => {
             setOffset(0);
             setQuery(e.target.value);
           }}
         />
-        <select
-          className="input"
-          value={status.join(",")}
-          onChange={(e) => {
-            setOffset(0);
-            const value = e.target.value;
-            setStatus(value ? value.split(",") : []);
-          }}
-        >
-          <option value="">Status</option>
-          {filters?.statuses.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <select
-          className="input"
-          value={project || ""}
-          onChange={(e) => {
-            setOffset(0);
-            setProject(e.target.value || undefined);
-          }}
-        >
-          <option value="">Project</option>
-          {filters?.projects.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <select
-          className="input"
-          value={area || ""}
-          onChange={(e) => {
-            setOffset(0);
-            setArea(e.target.value || undefined);
-          }}
-        >
-          <option value="">Area</option>
-          {filters?.areas.map((a) => (
-            <option key={a} value={a}>
-              {a}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={sort} onChange={(e) => setSort(e.target.value)}>
-          {SORT_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+
+        <div className="column-visibility">
+          <div className="column-visibility__header">
+            <span className="muted small">Column visibility</span>
+            <button
+              className="button tertiary"
+              type="button"
+              onClick={() => setVisibleColumns(columns.map((col) => col.key))}
+            >
+              Show all
+            </button>
+          </div>
+          <div className="column-toggle-list">
+            {columns.map((column) => (
+              <label
+                key={column.key}
+                className={`column-toggle ${visibleSet.has(column.key) ? "is-active" : ""}`.trim()}
+              >
+                <input
+                  type="checkbox"
+                  checked={visibleSet.has(column.key)}
+                  onChange={() => toggleColumn(column.key)}
+                />
+                <span>{column.label || column.key}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="sort-row">
+          <label className="muted small" htmlFor="sort-column">
+            Sort by
+          </label>
+          <div className="sort-controls">
+            <select
+              id="sort-column"
+              className="input"
+              value={sortColumn || ""}
+              onChange={(e) => {
+                setOffset(0);
+                setSortColumn(e.target.value || undefined);
+              }}
+            >
+              <option value="">Last edited (default)</option>
+              {columns.map((column) => (
+                <option key={column.key} value={column.key}>
+                  {column.label || column.key}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input"
+              value={sortDirection}
+              onChange={(e) => {
+                setOffset(0);
+                setSortDirection(e.target.value as "asc" | "desc");
+              }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {syncResult && (
@@ -167,39 +206,39 @@ export function NotionTodosView() {
 
       {error && <p className="badge-alert">{error}</p>}
 
-      {!loading && todos.length === 0 && !error && (
+      {!loading && rows.length === 0 && !error && (
         <p className="muted">Keine Aufgaben gefunden. Starte mit einem Refresh.</p>
       )}
 
-      <ul className="task-list scrollable" aria-live="polite">
-        {todos.map((task) => (
-          <li key={task.id} className="task-item">
-            <div className="task-title">
-              {task.url ? (
-                <a href={task.url} target="_blank" rel="noreferrer">
-                  {task.title || "(Untitled)"}
-                </a>
-              ) : (
-                task.title || "(Untitled)"
-              )}
-            </div>
-            <div className="task-meta">
-              {task.status && <span className="pill">{task.status}</span>}
-              {task.due_date && <span className="pill subtle">Due: {task.due_date}</span>}
-              {task.project && <span className="pill subtle">Project: {task.project}</span>}
-              {task.area && <span className="pill subtle">Area: {task.area}</span>}
-              {parseTags(task.tags_json).map((t) => (
-                <span key={t} className="pill subtle">
-                  #{t}
-                </span>
-              ))}
-              {task.last_edited_time && (
-                <span className="muted small">Edited {new Date(task.last_edited_time).toLocaleString()}</span>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+      {displayedColumns.length === 0 && (
+        <p className="muted">No columns selected. Choose at least one to see data.</p>
+      )}
+
+      {displayedColumns.length > 0 && rows.length > 0 && (
+        <div className="notion-table-wrapper">
+          <table className="notion-table" aria-label="Notion table view">
+            <thead>
+              <tr>
+                {displayedColumns.map((column) => (
+                  <th key={column.key}>{column.label || column.key}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => {
+                const rowId = (row.id as string | number | undefined) ?? index;
+                return (
+                  <tr key={rowId}>
+                    {displayedColumns.map((column) => (
+                      <td key={column.key}>{renderCell(column.key, row[column.key])}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="list-actions">
         {hasMore && (

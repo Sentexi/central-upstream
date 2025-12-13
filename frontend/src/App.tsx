@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { GlassCard } from "./core/GlassCard";
 import type { ModuleManifest } from "./core/types";
-import { matchActiveModules, getWidgetsForSlot } from "./core/moduleRegistry";
+import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 
 function App() {
   const [manifests, setManifests] = useState<ModuleManifest[] | null>(null);
@@ -19,33 +20,60 @@ function App() {
   const todayWidgets = getWidgetsForSlot(activeModules, "today_view");
 
   return (
-    <div>
-      <header>
-        <h1>Central Upstream</h1>
-        <p>Shell ohne aktive Module (Skeleton)</p>
-      </header>
+    <div className="app-shell">
+      <div className="noise-overlay" aria-hidden />
+      <div className="app-grid">
+        <header className="app-header">
+          <span className="kicker">Central Upstream</span>
+          <h1 className="title">System Operator</h1>
+          <p className="subtitle">
+            Dark Glass UI mit Electric-Blue Akzenten. Dein Control Center für heutige
+            Tasks.
+          </p>
+          <div className="status" aria-live="polite">
+            <span className="signal" aria-hidden />
+            <span>
+              {manifests === null
+                ? "Module Registry lädt..."
+                : `${activeModules.length} Module verbunden`}
+            </span>
+          </div>
+        </header>
 
-      <main>
-        <section>
-          <h2>Today</h2>
-          {manifests === null && <p>Lade Module...</p>}
+        <section className="stack">
+          <div className="section-heading">Today</div>
+          <div className="grid-cards">
+            {manifests === null && (
+              <GlassCard glow className="loader">
+                <span className="kicker">Booting</span>
+                <h3 className="card-title">Module Registry wird geladen</h3>
+                <p className="card-description">
+                  Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                </p>
+              </GlassCard>
+            )}
 
-          {manifests && todayWidgets.length === 0 && (
-            <div>
-              <p>Noch keine Module aktiv.</p>
-              <ul>
-                <li>Später: Integrationen verbinden.</li>
-                <li>Später: Module installieren / aktivieren.</li>
-              </ul>
-            </div>
-          )}
+            {manifests && todayWidgets.length === 0 && (
+              <GlassCard>
+                <div className="kicker">Keine Module aktiv</div>
+                <h3 className="card-title">Installiere dein erstes Modul</h3>
+                <p className="card-description">
+                  Verbinde Integrationen, aktiviere ein Modul und es erscheint hier in der
+                  Today-Ansicht.
+                </p>
+                <div className="pill">
+                  <span className="dot" aria-hidden />
+                  Quick Capture, Health, Mail
+                </div>
+              </GlassCard>
+            )}
 
-          {todayWidgets.length > 0 &&
-            todayWidgets.map((mod, i) =>
+            {todayWidgets.map((mod, i) =>
               mod.TodayWidget ? <mod.TodayWidget key={i} /> : null
             )}
+          </div>
         </section>
-      </main>
+      </div>
     </div>
   );
 }

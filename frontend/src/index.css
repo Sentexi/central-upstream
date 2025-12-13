@@ -1,0 +1,260 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #020617;
+  --surface: rgba(15, 23, 42, 0.6);
+  --surface-hover: rgba(30, 41, 59, 0.7);
+  --border: rgba(255, 255, 255, 0.08);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --primary: #3b82f6;
+  --primary-glow: rgba(59, 130, 246, 0.4);
+  --danger-glow: rgba(244, 63, 94, 0.4);
+  --card-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--text-main);
+  font-family: 'Geist Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.05), transparent 25%);
+  background-attachment: fixed;
+  line-height: 1.6;
+}
+
+.app-shell {
+  position: relative;
+  padding: 48px 24px 64px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  z-index: 0;
+}
+
+.app-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 24px;
+}
+
+.app-header {
+  display: grid;
+  gap: 8px;
+}
+
+.kicker {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.title {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.section-heading::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--primary);
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.glass-card {
+  position: relative;
+  padding: 24px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--card-shadow);
+  transition: transform 200ms ease, background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+  overflow: hidden;
+}
+
+.glass-card:hover {
+  background: var(--surface-hover);
+  transform: translateY(-2px);
+}
+
+.glass-card.glow-low {
+  box-shadow: 0 0 20px -5px var(--primary-glow);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.glass-card.glow-high {
+  box-shadow: 0 0 20px -5px var(--danger-glow);
+  border-color: rgba(244, 63, 94, 0.3);
+}
+
+.glass-card .card-meta {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  background: var(--primary);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+.status {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.status .signal {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(59, 130, 246, 0.3));
+  box-shadow: 0 0 10px var(--primary-glow);
+}
+
+.card-title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.card-description {
+  margin: 0 0 16px 0;
+  color: var(--text-muted);
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.input, input[type="text"] {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, 0.4);
+  color: var(--text-main);
+  font-size: 15px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.input:focus, input[type="text"]:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.button, button[type="submit"] {
+  border: none;
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(59, 130, 246, 0.7));
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.button:hover, button[type="submit"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 35px rgba(59, 130, 246, 0.4);
+}
+
+.button:active, button[type="submit"]:active {
+  transform: translateY(0);
+}
+
+.task-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.task-item {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.badge-success { color: #34d399; }
+.badge-alert { color: #f43f5e; }
+.badge-work { color: #818cf8; }
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.loader { opacity: 0.8; }

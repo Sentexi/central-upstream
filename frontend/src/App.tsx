@@ -4,7 +4,7 @@ import type { ModuleManifest } from "./core/types";
 import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 import { SettingsPage } from "./settings/SettingsPage";
 
-type View = "today" | "settings";
+type View = "today" | "work" | "settings";
 
 function App() {
   const [manifests, setManifests] = useState<ModuleManifest[] | null>(null);
@@ -23,6 +23,7 @@ function App() {
 
   const activeModules = manifests ? matchActiveModules(manifests) : [];
   const todayWidgets = getWidgetsForSlot(activeModules, "today_view");
+  const workWidgets = getWidgetsForSlot(activeModules, "work_dashboard");
 
   return (
     <div className="app-shell">
@@ -53,6 +54,17 @@ function App() {
                 ⏺
               </span>
               <span className="nav-label">Today</span>
+            </button>
+            <button
+              className={`nav-item ${view === "work" ? "active" : ""}`.trim()}
+              type="button"
+              onClick={() => setView("work")}
+              aria-label="Work"
+            >
+              <span className="nav-icon" aria-hidden>
+                ✅
+              </span>
+              <span className="nav-label">Work</span>
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
@@ -126,6 +138,40 @@ function App() {
 
                   {todayWidgets.map((mod, i) =>
                     mod.TodayWidget ? <mod.TodayWidget key={i} /> : null
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : view === "work" ? (
+            <div className="app-grid">
+              <header className="app-header">
+                <span className="kicker">Work</span>
+                <h1 className="title">Focus &amp; Projects</h1>
+                <p className="subtitle">Eine zentrale Sicht auf deine synchronisierten Aufgaben.</p>
+              </header>
+              <section className="stack">
+                <div className="section-heading">Work Dashboard</div>
+                <div className="grid-cards">
+                  {manifests === null && (
+                    <GlassCard glow className="loader">
+                      <span className="kicker">Booting</span>
+                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <p className="card-description">
+                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {manifests && workWidgets.length === 0 && (
+                    <GlassCard>
+                      <div className="kicker">Keine Work-Module aktiv</div>
+                      <h3 className="card-title">Aktiviere die Notion Sync</h3>
+                      <p className="card-description">
+                        Nach der Konfiguration erscheinen hier deine synchronisierten Aufgaben.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {workWidgets.map((mod, i) =>
+                    mod.WorkWidget ? <mod.WorkWidget key={i} /> : null
                   )}
                 </div>
               </section>

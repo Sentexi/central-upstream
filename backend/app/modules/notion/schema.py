@@ -14,9 +14,8 @@ def ensure_schema(db_path: str):
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS notion_pages_raw (
+            CREATE TABLE IF NOT EXISTS notion_rows_raw (
                 id TEXT PRIMARY KEY,
-                database_id TEXT,
                 raw_json TEXT,
                 last_edited_time TEXT,
                 created_time TEXT,
@@ -26,40 +25,15 @@ def ensure_schema(db_path: str):
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pages_raw_last_edited_time ON notion_pages_raw(last_edited_time)"
-        )
-        conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS notion_tasks (
+            CREATE TABLE IF NOT EXISTS notion_rows (
                 id TEXT PRIMARY KEY,
-                database_id TEXT,
-                title TEXT,
-                status TEXT,
-                due_date TEXT,
-                project TEXT,
-                area TEXT,
-                priority TEXT,
-                assignee TEXT,
-                tags_json TEXT,
-                url TEXT,
-                archived INTEGER,
-                created_time TEXT,
                 last_edited_time TEXT,
-                content_hash TEXT
+                created_time TEXT,
+                archived INTEGER,
+                url TEXT
             )
             """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON notion_tasks(status)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON notion_tasks(due_date)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_last_edited_time ON notion_tasks(last_edited_time)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_project ON notion_tasks(project)"
         )
         conn.commit()
 

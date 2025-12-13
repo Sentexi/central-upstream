@@ -1,132 +1,74 @@
-import hashlib
 import json
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, Iterable
 
 
-def extract_plain_text(rich_text: List[dict]) -> str:
-    parts: List[str] = []
-    for block in rich_text:
-        text = block.get("plain_text") or ""
-        parts.append(text)
-    return "".join(parts).strip()
+def normalize_column_name(name: str, existing: Iterable[str]) -> str:
+    base = name.strip().lower()
+    base = re.sub(r"\s+", "_", base)
+    base = re.sub(r"[^a-z0-9_]+", "", base)
+    if not base:
+        base = "col"
+
+    candidate = base
+    counter = 2
+    existing_set = set(existing)
+    while candidate in existing_set:
+        candidate = f"{base}_{counter}"
+        counter += 1
+    existing_set.add(candidate)
+    return candidate
 
 
-def extract_title(properties: Dict[str, Any]) -> Optional[str]:
-    for _key, value in properties.items():
-        if value.get("type") == "title":
-            return extract_plain_text(value.get("title", []))
-    return None
+def map_notion_type_to_sqlite(notion_type: str) -> str:
+    if notion_type in {"title", "rich_text", "select", "status", "email", "url", "phone_number"}:
+        return "TEXT"
+    if notion_type == "number":
+        return "REAL"
+    if notion_type == "checkbox":
+        return "INTEGER"
+    if notion_type == "date":
+        return "TEXT"
+    if notion_type in {"multi_select", "people", "relation", "files", "formula", "rollup"}:
+        return "TEXT"
+    return "TEXT"
 
 
-def extract_select(properties: Dict[str, Any], names: List[str]) -> Optional[str]:
-    for candidate in names:
-        prop = properties.get(candidate)
-        if prop and prop.get("type") in {"select", "status"}:
-            selected = prop.get(prop.get("type"))
-            if isinstance(selected, dict):
-                return selected.get("name")
-    for _key, prop in properties.items():
-        if prop.get("type") in {"select", "status"}:
-            selected = prop.get(prop.get("type"))
-            if isinstance(selected, dict):
-                return selected.get("name")
-    return None
+def extract_rich_text(blocks: list[dict]) -> str:
+    return "".join([block.get("plain_text") or "" for block in blocks])
 
 
-def extract_date(properties: Dict[str, Any], names: List[str]) -> Optional[str]:
-    for candidate in names:
-        prop = properties.get(candidate)
-        if prop and prop.get("type") == "date":
-            date_obj = prop.get("date")
-            if isinstance(date_obj, dict):
-                return date_obj.get("start")
-    for _key, prop in properties.items():
-        if prop.get("type") == "date":
-            date_obj = prop.get("date")
-            if isinstance(date_obj, dict):
-                return date_obj.get("start")
-    return None
-
-
-def extract_multi_select(properties: Dict[str, Any], names: List[str]) -> List[str]:
-    prop = None
-    for candidate in names:
-        maybe = properties.get(candidate)
-        if maybe and maybe.get("type") == "multi_select":
-            prop = maybe
-            break
+def extract_property_value(prop: Dict[str, Any], notion_type: str) -> Any:
     if not prop:
-        for _key, value in properties.items():
-            if value.get("type") == "multi_select":
-                prop = value
-                break
-    if not prop:
-        return []
-    tags = prop.get("multi_select") or []
-    return [tag.get("name") for tag in tags if tag.get("name")]
+        return None
 
-
-def compute_content_hash(task: Dict[str, Any]) -> str:
-    relevant = [
-        task.get("title", ""),
-        task.get("status", ""),
-        task.get("due_date", ""),
-        task.get("project", ""),
-        task.get("area", ""),
-        task.get("priority", ""),
-        task.get("assignee", ""),
-        task.get("tags_json", ""),
-    ]
-    payload = "|".join([str(x) for x in relevant])
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def normalize_task(page: Dict[str, Any], property_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    properties = page.get("properties", {}) or {}
-    property_map = property_map or {}
-
-    def mapped_names(default_names: List[str], key: str) -> List[str]:
-        mapped = property_map.get(key)
-        return [mapped] if mapped else default_names
-
-    title = extract_title(properties)
-    if not title:
-        mapped_title = property_map.get("title")
-        if mapped_title and mapped_title in properties:
-            title_prop = properties[mapped_title]
-            if title_prop.get("type") == "title":
-                title = extract_plain_text(title_prop.get("title", []))
-    if not title:
-        for candidate in properties.values():
-            if candidate.get("type") == "rich_text":
-                title = extract_plain_text(candidate.get("rich_text", []))
-                break
-    status = extract_select(properties, mapped_names(["Status", "State"], "status"))
-    due_date = extract_date(properties, mapped_names(["Due", "Fällig", "Due Date"], "due_date"))
-    project = extract_select(properties, mapped_names(["Project", "Projekt"], "project"))
-    area = extract_select(properties, mapped_names(["Area", "Team"], "area"))
-    priority = extract_select(properties, mapped_names(["Priority", "Prio"], "priority"))
-    tags = extract_multi_select(properties, mapped_names(["Tags", "Labels"], "tags"))
-
-    parent = page.get("parent", {}) or {}
-    data_source_id = parent.get("data_source_id") or parent.get("database_id")
-
-    task = {
-        "id": page.get("id"),
-        "database_id": data_source_id,
-        "title": title or "",
-        "status": status,
-        "due_date": due_date,
-        "project": project,
-        "area": area,
-        "priority": priority,
-        "assignee": None,
-        "tags_json": json.dumps(tags) if tags else None,
-        "url": page.get("url"),
-        "archived": int(bool(page.get("archived"))),
-        "created_time": page.get("created_time"),
-        "last_edited_time": page.get("last_edited_time"),
-    }
-    task["content_hash"] = compute_content_hash(task)
-    return task
-
+    if notion_type == "title":
+        return extract_rich_text(prop.get("title", []))
+    if notion_type == "rich_text":
+        return extract_rich_text(prop.get("rich_text", []))
+    if notion_type in {"select", "status"}:
+        selected = prop.get(notion_type)
+        if isinstance(selected, dict):
+            return selected.get("name")
+        return None
+    if notion_type == "email":
+        return prop.get("email")
+    if notion_type == "url":
+        return prop.get("url")
+    if notion_type == "phone_number":
+        return prop.get("phone_number")
+    if notion_type == "number":
+        return prop.get("number")
+    if notion_type == "checkbox":
+        return int(bool(prop.get("checkbox")))
+    if notion_type == "date":
+        date_obj = prop.get("date") or {}
+        if isinstance(date_obj, dict):
+            return date_obj.get("start")
+        return None
+    if notion_type == "multi_select":
+        values = prop.get("multi_select") or []
+        return json.dumps([item.get("name") for item in values if item.get("name")])
+    if notion_type in {"people", "relation", "files", "formula", "rollup"}:
+        return json.dumps(prop.get(notion_type))
+    return None

@@ -35,11 +35,60 @@ class NotionRepository:
             rows = conn.execute("SELECT key, value FROM notion_meta").fetchall()
         return {row["key"]: row["value"] for row in rows}
 
-    # Raw pages
+    def save_schema_json(self, schema: Dict[str, Any]):
+        self.set_meta("schema_json", json.dumps(schema))
+
+    def get_schema_json(self) -> Optional[Dict[str, Any]]:
+        value = self.get_meta("schema_json")
+        return json.loads(value) if value else None
+
+    def save_property_map(self, property_map: Dict[str, Dict[str, Any]]):
+        self.set_meta("property_map_json", json.dumps(property_map))
+
+    def get_property_map(self) -> Dict[str, Dict[str, Any]]:
+        value = self.get_meta("property_map_json")
+        return json.loads(value) if value else {}
+
+    # Schema helpers
+    def _existing_columns(self, table: str) -> List[str]:
+        with self._connect() as conn:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return [row["name"] for row in rows]
+
+    def ensure_wide_table(self, property_map: Dict[str, Dict[str, Any]]):
+        existing = set(self._existing_columns("notion_rows"))
+        base_columns = {
+            "id": "TEXT",
+            "last_edited_time": "TEXT",
+            "created_time": "TEXT",
+            "archived": "INTEGER",
+            "url": "TEXT",
+        }
+        missing_base = set(base_columns.keys()) - existing
+        if missing_base:
+            with self._connect() as conn:
+                for column in missing_base:
+                    conn.execute(f"ALTER TABLE notion_rows ADD COLUMN {column} {base_columns[column]}")
+                conn.commit()
+            existing.update(missing_base)
+
+        columns_to_add: List[Tuple[str, str]] = []
+        for entry in property_map.values():
+            column = entry.get("column")
+            sqlite_type = entry.get("sqlite_type", "TEXT")
+            if column and column not in existing:
+                columns_to_add.append((column, sqlite_type))
+
+        if columns_to_add:
+            with self._connect() as conn:
+                for column, col_type in columns_to_add:
+                    conn.execute(f"ALTER TABLE notion_rows ADD COLUMN {column} {col_type}")
+                conn.commit()
+
+    # Data upserts
     def upsert_page_raw(
         self,
         page_id: str,
-        database_id: str,
         raw_json: dict,
         last_edited_time: str,
         created_time: str,
@@ -49,13 +98,12 @@ class NotionRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO notion_pages_raw
-                (id, database_id, raw_json, last_edited_time, created_time, archived, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO notion_rows_raw
+                (id, raw_json, last_edited_time, created_time, archived, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     page_id,
-                    database_id,
                     json.dumps(raw_json),
                     last_edited_time,
                     created_time,
@@ -65,81 +113,94 @@ class NotionRepository:
             )
             conn.commit()
 
-    def upsert_task(self, task: Dict[str, Any]):
+    def upsert_row(self, row_data: Dict[str, Any]):
+        columns = list(row_data.keys())
+        placeholders = ":" + ", :".join(columns)
+        column_clause = ", ".join(columns)
+        update_clause = ", ".join([f"{col}=excluded.{col}" for col in columns if col != "id"])
+        sql = (
+            f"INSERT INTO notion_rows ({column_clause}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) DO UPDATE SET {update_clause}"
+        )
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO notion_tasks
-                (id, database_id, title, status, due_date, project, area, priority, assignee, tags_json, url, archived, created_time, last_edited_time, content_hash)
-                VALUES (:id, :database_id, :title, :status, :due_date, :project, :area, :priority, :assignee, :tags_json, :url, :archived, :created_time, :last_edited_time, :content_hash)
-                """,
-                task,
-            )
+            conn.execute(sql, row_data)
             conn.commit()
 
-    def query_tasks(
+    # Queries
+    def query_rows(
         self,
+        property_map: Dict[str, Dict[str, Any]],
         q: Optional[str] = None,
-        status: Optional[List[str]] = None,
-        project: Optional[str] = None,
-        area: Optional[str] = None,
-        due_from: Optional[str] = None,
-        due_to: Optional[str] = None,
-        archived: bool = False,
-        sort: str = "due_date_asc",
+        filters: Optional[Dict[str, Any]] = None,
+        sort: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        where = ["archived = ?"]
-        params: List[Any] = [int(archived)]
+        filters = filters or {}
+        where: List[str] = []
+        params: List[Any] = []
 
-        if q:
-            where.append("(title LIKE ? OR project LIKE ? OR area LIKE ?)")
+        text_columns = [entry.get("column") for entry in property_map.values() if entry.get("sqlite_type") == "TEXT"]
+        text_columns.extend(["url"])
+
+        if q and text_columns:
             like = f"%{q}%"
-            params.extend([like, like, like])
-        if status:
-            placeholders = ",".join(["?"] * len(status))
-            where.append(f"status IN ({placeholders})")
-            params.extend(status)
-        if project:
-            where.append("project = ?")
-            params.append(project)
-        if area:
-            where.append("area = ?")
-            params.append(area)
-        if due_from:
-            where.append("due_date >= ?")
-            params.append(due_from)
-        if due_to:
-            where.append("due_date <= ?")
-            params.append(due_to)
+            clauses = [f"{col} LIKE ?" for col in text_columns if col]
+            where.append("(" + " OR ".join(clauses) + ")")
+            params.extend([like] * len(clauses))
 
-        order_by = "due_date ASC"
-        if sort == "last_edited_desc":
-            order_by = "last_edited_time DESC"
-        elif sort == "due_date_desc":
-            order_by = "due_date DESC"
-        elif sort == "title_asc":
-            order_by = "title COLLATE NOCASE ASC"
+        for label, value in filters.items():
+            column_name = None
+            entry = property_map.get(label)
+            if entry:
+                column_name = entry.get("column")
+                notion_type = entry.get("type")
+            else:
+                column_name = label
+                notion_type = None
 
-        where_clause = " AND ".join(where)
-        sql = f"SELECT * FROM notion_tasks WHERE {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?"
+            if not column_name:
+                continue
+
+            if isinstance(value, dict) and ("from" in value or "to" in value):
+                if value.get("from"):
+                    where.append(f"{column_name} >= ?")
+                    params.append(value.get("from"))
+                if value.get("to"):
+                    where.append(f"{column_name} <= ?")
+                    params.append(value.get("to"))
+                continue
+
+            if isinstance(value, list):
+                placeholders = ",".join(["?"] * len(value))
+                where.append(f"{column_name} IN ({placeholders})")
+                params.extend(value)
+                continue
+
+            if notion_type == "checkbox":
+                value = int(bool(value))
+
+            where.append(f"{column_name} = ?")
+            params.append(value)
+
+        where_clause = " AND ".join(where) if where else "1=1"
+
+        order_clause = "last_edited_time DESC"
+        if sort:
+            parts = sort.split(":")
+            if len(parts) == 2:
+                col, direction = parts
+                direction = direction.lower() in {"desc", "descending"}
+                column_name = property_map.get(col, {}).get("column") or col
+                order_clause = f"{column_name} {'DESC' if direction else 'ASC'}"
+
+        sql = f"SELECT * FROM notion_rows WHERE {where_clause} ORDER BY {order_clause} LIMIT ? OFFSET ?"
         params_with_limit = params + [limit, offset]
-
-        count_sql = f"SELECT COUNT(*) as cnt FROM notion_tasks WHERE {where_clause}"
+        count_sql = f"SELECT COUNT(*) as cnt FROM notion_rows WHERE {where_clause}"
 
         with self._connect() as conn:
             rows = conn.execute(sql, params_with_limit).fetchall()
             total_row = conn.execute(count_sql, params).fetchone()
-            total = total_row["cnt"] if total_row else 0
 
-        items = [dict(row) for row in rows]
-        return items, total
-
-    def get_filter_values(self) -> Dict[str, List[str]]:
-        with self._connect() as conn:
-            statuses = [row[0] for row in conn.execute("SELECT DISTINCT status FROM notion_tasks WHERE status IS NOT NULL AND status != '' ORDER BY status").fetchall()]
-            projects = [row[0] for row in conn.execute("SELECT DISTINCT project FROM notion_tasks WHERE project IS NOT NULL AND project != '' ORDER BY project").fetchall()]
-            areas = [row[0] for row in conn.execute("SELECT DISTINCT area FROM notion_tasks WHERE area IS NOT NULL AND area != '' ORDER BY area").fetchall()]
-        return {"statuses": statuses, "projects": projects, "areas": areas}
-
+        total = total_row["cnt"] if total_row else 0
+        return [dict(row) for row in rows], total

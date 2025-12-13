@@ -86,6 +86,9 @@ class NotionClient:
     def retrieve_database(self, database_id: str) -> dict:
         return self._request("GET", f"/databases/{database_id}")
 
+    def retrieve_data_source(self, data_source_id: str) -> dict:
+        return self._request("GET", f"/data_sources/{data_source_id}")
+
     def query_data_source(
         self,
         data_source_id: str,

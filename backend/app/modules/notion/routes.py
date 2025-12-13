@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 from .repository import NotionRepository
-from .sync import run_full_sync
+from .sync_manager import sync_manager
 
 bp = Blueprint("notion", __name__)
 
@@ -188,11 +188,13 @@ def list_todos():
 
 @bp.post("/sync")
 def trigger_sync():
-    result = run_full_sync()
-    status = 200 if result.get("ok") else 500
-    return jsonify(result), status
+    data = request.get_json(silent=True) or {}
+    force_full = bool(data.get("force_full"))
+    status = sync_manager.start_sync(force_full=force_full)
+    return jsonify(status), 202
 
 
-@bp.post("/sync/full")
-def trigger_full_sync():
-    return trigger_sync()
+@bp.get("/sync/status")
+def sync_status():
+    status = sync_manager.get_status()
+    return jsonify(status)

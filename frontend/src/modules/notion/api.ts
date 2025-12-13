@@ -1,4 +1,4 @@
-import type { NotionColumn, RowsResponse, SyncResult } from "./types";
+import type { NotionColumn, RowsResponse, SyncResult, SyncStatus } from "./types";
 
 const BASE_URL = "/api/modules/notion";
 
@@ -33,12 +33,7 @@ export async function fetchRows(params: RowsQuery = {}): Promise<RowsResponse> {
   return res.json();
 }
 
-export async function triggerSync(force_full = false): Promise<SyncResult> {
-  const res = await fetch(`${BASE_URL}/sync`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force_full }),
-  });
+async function handleSyncResponse(res: Response): Promise<SyncStatus> {
   if (!res.ok) {
     const statusLabel = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
     let errorMessage = `Sync failed (${statusLabel})`;
@@ -54,4 +49,18 @@ export async function triggerSync(force_full = false): Promise<SyncResult> {
     throw new Error(errorMessage);
   }
   return res.json();
+}
+
+export async function triggerSync(force_full = false): Promise<SyncStatus> {
+  const res = await fetch(`${BASE_URL}/sync`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ force_full }),
+  });
+  return handleSyncResponse(res);
+}
+
+export async function fetchSyncStatus(): Promise<SyncStatus> {
+  const res = await fetch(`${BASE_URL}/sync/status`);
+  return handleSyncResponse(res);
 }

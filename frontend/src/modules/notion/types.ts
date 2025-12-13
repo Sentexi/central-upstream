@@ -15,6 +15,17 @@ export type SyncResult = {
   error?: string | null;
 };
 
+export type SyncStatus = {
+  status: "idle" | "running" | "completed" | "error";
+  processed: number;
+  total: number;
+  mode: "full" | "refresh";
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  result?: SyncResult | null;
+};
+
 export type RowsResponse = {
   items: NotionRow[];
   total: number;

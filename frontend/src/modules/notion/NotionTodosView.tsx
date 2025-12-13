@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
-import { fetchColumns, fetchRows, triggerSync } from "./api";
-import type { NotionColumn, NotionRow, SyncResult } from "./types";
+import { fetchColumns, fetchRows, fetchSyncStatus, triggerSync } from "./api";
+import type { NotionColumn, NotionRow, SyncResult, SyncStatus } from "./types";
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -36,7 +36,9 @@ export function NotionTodosView() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const syncPollRef = useMemo(() => ({ current: null as ReturnType<typeof setInterval> | null }), []);
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedQuery(query), 350);
@@ -82,17 +84,69 @@ export function NotionTodosView() {
     setOffset(0);
   }
 
+  function updateSyncStatus(status: SyncStatus) {
+    setSyncStatus(status);
+    if (status.status === "running") {
+      setSyncResult(null);
+    }
+    if (status.result) {
+      setSyncResult(status.result);
+    }
+    if (status.status === "completed" && status.result?.ok) {
+      resetAndReload();
+    }
+    if (status.status === "error" && status.error) {
+      setError(status.error);
+    }
+  }
+
+  function stopSyncPolling() {
+    if (syncPollRef.current) {
+      clearInterval(syncPollRef.current);
+      syncPollRef.current = null;
+    }
+  }
+
+  function startSyncPolling() {
+    if (syncPollRef.current) return;
+    syncPollRef.current = setInterval(async () => {
+      try {
+        const status = await fetchSyncStatus();
+        updateSyncStatus(status);
+        if (status.status !== "running") {
+          stopSyncPolling();
+        }
+      } catch (err) {
+        console.error(err);
+        stopSyncPolling();
+      }
+    }, 1500);
+  }
+
+  useEffect(() => {
+    fetchSyncStatus()
+      .then((status) => {
+        updateSyncStatus(status);
+        if (status.status === "running") {
+          startSyncPolling();
+        }
+      })
+      .catch((err) => console.error("Failed to fetch sync status", err));
+
+    return () => stopSyncPolling();
+  }, []);
+
   async function handleSync(force_full = false) {
     try {
-      setLoading(true);
-      const result = await triggerSync(force_full);
-      setSyncResult(result);
-      resetAndReload();
+      setError(null);
+      const status = await triggerSync(force_full);
+      updateSyncStatus(status);
+      if (status.status === "running") {
+        startSyncPolling();
+      }
     } catch (err) {
       console.error(err);
       setError((err as Error).message);
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -105,6 +159,10 @@ export function NotionTodosView() {
   const visibleSet = useMemo(() => new Set(visibleColumns), [visibleColumns]);
   const displayedColumns = columns.filter((col) => col.key && visibleSet.has(col.key));
   const hasMore = offset + limit < total;
+  const isSyncing = syncStatus?.status === "running";
+  const syncTotal = syncStatus?.total ?? 0;
+  const syncProcessed = syncStatus?.processed ?? 0;
+  const syncProgress = syncTotal > 0 ? Math.min(100, Math.round((syncProcessed / syncTotal) * 100)) : 0;
 
   return (
     <GlassCard glow className="notion-todos">
@@ -114,14 +172,33 @@ export function NotionTodosView() {
           <h3 className="card-title">Notion Table View</h3>
         </div>
         <div className="actions">
-          <button className="button secondary" type="button" onClick={() => handleSync(false)}>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={isSyncing}
+            onClick={() => handleSync(false)}
+          >
             Refresh
           </button>
-          <button className="button" type="button" onClick={() => handleSync(true)}>
+          <button className="button" type="button" disabled={isSyncing} onClick={() => handleSync(true)}>
             Full Sync
           </button>
         </div>
       </div>
+
+      {isSyncing && (
+        <div className="sync-progress" role="status" aria-live="polite">
+          <div className="sync-progress__labels">
+            <span className="muted small">
+              Syncing {syncProcessed}/{syncTotal || "?"} tasks
+            </span>
+            <span className="muted small">{syncProgress}%</span>
+          </div>
+          <div className="progress-bar">
+            <div className="progress-bar__fill" style={{ width: `${syncProgress}%` }} />
+          </div>
+        </div>
+      )}
 
       <div className="filters-grid">
         <input

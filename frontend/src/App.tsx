@@ -9,6 +9,7 @@ type View = "today" | "settings";
 function App() {
   const [manifests, setManifests] = useState<ModuleManifest[] | null>(null);
   const [view, setView] = useState<View>("today");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
     fetch("/api/modules")
@@ -26,8 +27,17 @@ function App() {
   return (
     <div className="app-shell">
       <div className="noise-overlay" aria-hidden />
-      <div className="layout-grid">
-        <aside className="sidebar">
+      <div className={`layout-grid ${isSidebarOpen ? "" : "sidebar-collapsed"}`}>
+        <aside className={`sidebar ${isSidebarOpen ? "is-open" : "is-collapsed"}`}>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={() => setIsSidebarOpen((open) => !open)}
+            aria-expanded={isSidebarOpen}
+            aria-label={isSidebarOpen ? "Sidebar einklappen" : "Sidebar ausklappen"}
+          >
+            <span aria-hidden>{isSidebarOpen ? "⟨" : "⟩"}</span>
+          </button>
           <div className="sidebar-header">
             <span className="kicker">Central Upstream</span>
             <h2 className="sidebar-title">System Operator</h2>
@@ -37,28 +47,32 @@ function App() {
               className={`nav-item ${view === "today" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("today")}
+              aria-label="Today"
             >
               <span className="nav-icon" aria-hidden>
                 ⏺
               </span>
-              Today
+              <span className="nav-label">Today</span>
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("settings")}
+              aria-label="Settings"
             >
               <span className="nav-icon" aria-hidden>
                 ⚙
               </span>
-              Settings
+              <span className="nav-label">Settings</span>
             </button>
           </nav>
           <div className="sidebar-footer" aria-live="polite">
             <span className="signal" aria-hidden />
-            {manifests === null
-              ? "Module Registry lädt..."
-              : `${activeModules.length} Module verbunden`}
+            <span className="sidebar-status-text">
+              {manifests === null
+                ? "Module Registry lädt..."
+                : `${activeModules.length} Module verbunden`}
+            </span>
           </div>
         </aside>
 

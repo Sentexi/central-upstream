@@ -1,4 +1,5 @@
 import os
+
 from app.core.module_base import BaseModule
 from .routes import bp
 from .schema import ensure_schema

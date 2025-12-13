@@ -31,16 +31,13 @@ def _get_repository() -> NotionRepository:
     return NotionRepository(db_path)
 
 
-def _ensure_database_id(client: NotionClient, repo: NotionRepository, db_name: str) -> str:
+def _ensure_database_id(repo: NotionRepository, database_id: str) -> str:
     database_id = repo.get_meta("database_id")
     if database_id:
         return database_id
-    database_obj = client.search_database_by_name(db_name)
-    if not database_obj:
-        raise RuntimeError("Notion Datenbank nicht gefunden. Stelle sicher, dass der Token Zugriff hat.")
-    database_id = database_obj.get("id")
+    if not database_id:
+        raise RuntimeError("Notion Database ID fehlt.")
     repo.set_meta("database_id", database_id)
-    repo.set_meta("database_name", db_name)
     return database_id
 
 
@@ -99,12 +96,12 @@ def sync_notion_database(force_full: bool = False) -> SyncResult:
     start_time = time.time()
     settings = _load_settings()
     token = settings.get("notion_api_key")
-    db_name = settings.get("notion_db_name")
+    database_id = settings.get("notion_database_id")
     base_url = settings.get("notion_api_base_url", "https://api.notion.com/v1")
     version = settings.get("notion_api_version") or DEFAULT_NOTION_VERSION
     if version != DEFAULT_NOTION_VERSION:
         version = DEFAULT_NOTION_VERSION
-    if not token or not db_name:
+    if not token or not database_id:
         return SyncResult(ok=False, error="Notion Settings unvollständig", mode="none", fetched_count=0, upserted_count=0, duration_ms=0)
 
     repo = _get_repository()
@@ -112,7 +109,7 @@ def sync_notion_database(force_full: bool = False) -> SyncResult:
     preferred_data_source_name = settings.get("notion_data_source_name")
 
     try:
-        database_id = _ensure_database_id(client, repo, db_name)
+        database_id = _ensure_database_id(repo, database_id)
         data_source_id = _ensure_data_source_id(client, repo, database_id, preferred_name=preferred_data_source_name)
     except PermissionError as exc:
         return SyncResult(ok=False, error=str(exc), mode="none", fetched_count=0, upserted_count=0, duration_ms=0)

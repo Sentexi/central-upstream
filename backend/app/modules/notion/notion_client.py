@@ -114,3 +114,28 @@ class NotionClient:
                 break
             payload["start_cursor"] = data.get("next_cursor")
 
+    def query_database(
+        self,
+        database_id: str,
+        filter_obj: Optional[dict] = None,
+        sorts: Optional[List[dict]] = None,
+        start_cursor: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Iterable[dict]:
+        payload: Dict[str, Any] = {"page_size": page_size}
+        if filter_obj:
+            payload["filter"] = filter_obj
+        if sorts:
+            payload["sorts"] = sorts
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+
+        while True:
+            data = self._request("POST", f"/databases/{database_id}/query", json=payload)
+            for result in data.get("results", []):
+                yield result
+
+            if not data.get("has_more"):
+                break
+            payload["start_cursor"] = data.get("next_cursor")
+

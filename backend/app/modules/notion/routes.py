@@ -47,8 +47,13 @@ def list_rows():
     return jsonify({"items": rows, "total": total, "limit": limit, "offset": offset})
 
 
-@bp.post("/sync/full")
-def trigger_full_sync():
+@bp.post("/sync")
+def trigger_sync():
     result = run_full_sync()
     status = 200 if result.get("ok") else 500
     return jsonify(result), status
+
+
+@bp.post("/sync/full")
+def trigger_full_sync():
+    return trigger_sync()

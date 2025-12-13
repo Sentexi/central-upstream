@@ -29,7 +29,7 @@ class NotionModule(BaseModule):
             from app.core.settings_storage import settings_storage
 
             settings = settings_storage.get_settings_for_module(self.id)
-            return bool(settings.get("notion_api_key") and settings.get("notion_db_name"))
+            return bool(settings.get("notion_api_key") and settings.get("notion_database_id"))
         except Exception:
             return False
 

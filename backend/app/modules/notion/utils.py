@@ -25,6 +25,8 @@ def map_notion_type_to_sqlite(notion_type: str) -> str:
         return "TEXT"
     if notion_type == "number":
         return "REAL"
+    if notion_type == "unique_id":
+        return "TEXT"
     if notion_type == "checkbox":
         return "INTEGER"
     if notion_type == "date":
@@ -59,6 +61,13 @@ def extract_property_value(prop: Dict[str, Any], notion_type: str) -> Any:
         return prop.get("phone_number")
     if notion_type == "number":
         return prop.get("number")
+    if notion_type == "unique_id":
+        unique_id_obj = prop.get("unique_id") or {}
+        number = unique_id_obj.get("number")
+        prefix = unique_id_obj.get("prefix")
+        if number is None:
+            return None
+        return f"{prefix}-{number}" if prefix else number
     if notion_type == "checkbox":
         return int(bool(prop.get("checkbox")))
     if notion_type == "date":

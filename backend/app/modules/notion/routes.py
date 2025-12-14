@@ -158,6 +158,9 @@ def list_rows():
         for prop_name, entries in row_relations.items():
             meta = relation_properties.get(prop_name)
             column_base = meta.get("column") if meta else prop_name
+            if entries:
+                entry_column = entries[0].get("property_value")
+                column_base = entry_column or column_base
             links: List[Dict[str, Optional[str]]] = []
             for entry in sorted(entries, key=lambda e: e.get("position", 0)):
                 target = cached_targets.get(entry.get("to_page_id")) or {}

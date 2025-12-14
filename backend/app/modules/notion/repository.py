@@ -128,17 +128,27 @@ class NotionRepository:
             conn.commit()
 
     def replace_relations_for_page(
-        self, page_id: str, relations: Iterable[Tuple[str, str, int]]
+        self, page_id: str, relations: Iterable[Dict[str, Any]]
     ) -> None:
-        rows = [(page_id, prop, target, pos) for prop, target, pos in relations]
+        rows = [
+            (
+                page_id,
+                rel.get("property_name"),
+                rel.get("property_value"),
+                rel.get("to_page_id"),
+                rel.get("position", 0),
+                rel.get("value"),
+            )
+            for rel in relations
+        ]
         with self._connect() as conn:
             conn.execute("DELETE FROM notion_relations WHERE from_page_id = ?", (page_id,))
             if rows:
                 conn.executemany(
                     """
                     INSERT OR REPLACE INTO notion_relations
-                    (from_page_id, property_name, to_page_id, position)
-                    VALUES (?, ?, ?, ?)
+                    (from_page_id, property_name, property_value, to_page_id, position, value)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     rows,
                 )
@@ -152,7 +162,7 @@ class NotionRepository:
             return {}
         placeholders = ",".join(["?"] * len(page_ids))
         sql = (
-            f"SELECT from_page_id, property_name, to_page_id, position "
+            f"SELECT from_page_id, property_name, property_value, to_page_id, position, value "
             f"FROM notion_relations WHERE from_page_id IN ({placeholders})"
             " ORDER BY position"
         )
@@ -167,6 +177,8 @@ class NotionRepository:
                 {
                     "to_page_id": row["to_page_id"],
                     "position": row["position"],
+                    "property_value": row["property_value"],
+                    "value": row["value"],
                 }
             )
         return relations
@@ -204,18 +216,24 @@ class NotionRepository:
             for prop_name, entries in row_relations.items():
                 column_name = relation_columns.get(prop_name)
                 if not column_name:
+                    column_name = next(
+                        (
+                            entry.get("property_value")
+                            for entry in entries
+                            if entry.get("property_value")
+                        ),
+                        None,
+                    )
+                if not column_name:
                     continue
-                links: List[Dict[str, Optional[str]]] = []
+                relation_values: List[Optional[str]] = []
                 for entry in sorted(entries, key=lambda e: e.get("position", 0)):
                     target = cached_targets.get(entry.get("to_page_id")) or {}
                     title = target.get("title") or ""
-                    links.append(
-                        {
-                            "title": title,
-                            "url": target.get("url"),
-                        }
-                    )
-                row_updates[column_name] = json.dumps(links)
+                    relation_value = entry.get("value") or title or entry.get("to_page_id")
+                    relation_values.append(relation_value)
+                if relation_values:
+                    row_updates[column_name] = json.dumps(relation_values)
             if row_updates:
                 columns_clause = ", ".join([f"{col} = ?" for col in row_updates.keys()])
                 values = list(row_updates.values())

@@ -106,21 +106,32 @@ def _row_from_page(page: Dict[str, any], property_map: Dict[str, Dict[str, str]]
     return row
 
 
-def _extract_relations_from_page(page: Dict[str, any]) -> Tuple[List[Tuple[str, str, int]], Set[str]]:
+def _extract_relations_from_page(
+    page: Dict[str, any], property_map: Dict[str, Dict[str, str]]
+) -> Tuple[List[Dict[str, any]], Set[str]]:
     properties = page.get("properties") or {}
-    relations: List[Tuple[str, str, int]] = []
+    relations: List[Dict[str, any]] = []
     targets: Set[str] = set()
     for prop_name, prop_value in properties.items():
         if not isinstance(prop_value, dict):
             continue
         if prop_value.get("type") != "relation":
             continue
+        property_value = property_map.get(prop_name, {}).get("column") or prop_name
         rel_entries = prop_value.get("relation") or []
         for idx, rel in enumerate(rel_entries):
             to_page_id = rel.get("id") or rel.get("page_id")
             if not to_page_id:
                 continue
-            relations.append((prop_name, to_page_id, idx))
+            relations.append(
+                {
+                    "property_name": prop_name,
+                    "property_value": property_value,
+                    "to_page_id": to_page_id,
+                    "position": idx,
+                    "value": to_page_id,
+                }
+            )
             targets.add(to_page_id)
     return relations, targets
 
@@ -275,7 +286,7 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
         )
         row_data = _row_from_page(page, property_map)
         repo.upsert_row(row_data)
-        relations, targets = _extract_relations_from_page(page)
+        relations, targets = _extract_relations_from_page(page, property_map)
         repo.replace_relations_for_page(page.get("id"), relations)
         relation_targets.update(targets)
         upserted_count += 1

@@ -41,12 +41,19 @@ def ensure_schema(db_path: str):
             CREATE TABLE IF NOT EXISTS notion_relations (
                 from_page_id TEXT NOT NULL,
                 property_name TEXT NOT NULL,
+                property_value TEXT,
                 to_page_id TEXT NOT NULL,
                 position INTEGER NOT NULL,
+                value TEXT,
                 PRIMARY KEY (from_page_id, property_name, to_page_id)
             )
             """
         )
+        existing_columns = [row["name"] for row in conn.execute("PRAGMA table_info(notion_relations)")]
+        if "property_value" not in existing_columns:
+            conn.execute("ALTER TABLE notion_relations ADD COLUMN property_value TEXT")
+        if "value" not in existing_columns:
+            conn.execute("ALTER TABLE notion_relations ADD COLUMN value TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_notion_relations_from ON notion_relations(from_page_id)"
         )

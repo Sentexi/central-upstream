@@ -286,6 +286,8 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     if missing_relation_targets:
         _resolve_relation_targets(client, repo, missing_relation_targets)
 
+    repo.update_relation_columns(property_map)
+
     now_iso = datetime.utcnow().isoformat() + "Z"
     repo.set_meta("last_full_sync", now_iso)
     repo.set_meta("last_incremental_sync", now_iso)

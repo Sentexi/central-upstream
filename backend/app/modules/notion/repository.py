@@ -171,6 +171,69 @@ class NotionRepository:
             )
         return relations
 
+    def update_relation_columns(self, property_map: Dict[str, Dict[str, Any]]) -> None:
+        relation_properties: Dict[str, Dict[str, Any]] = {
+            name: meta for name, meta in property_map.items() if meta.get("type") == "relation"
+        }
+        if not relation_properties:
+            return
+
+        relation_columns = {name: meta.get("column") or name for name, meta in relation_properties.items()}
+
+        with self._connect() as conn:
+            page_rows = conn.execute("SELECT id FROM notion_rows").fetchall()
+            page_ids = [row["id"] for row in page_rows if row["id"]]
+
+        if not page_ids:
+            return
+
+        relations = self.get_relations_for_pages(page_ids)
+
+        to_page_ids: List[str] = []
+        for rels in relations.values():
+            for entries in rels.values():
+                to_page_ids.extend(
+                    [entry.get("to_page_id") for entry in entries if entry.get("to_page_id")]
+                )
+        cached_targets = self.get_cached_pages(to_page_ids)
+
+        updates: List[Tuple[Any, ...]] = []
+        for page_id in page_ids:
+            row_relations = relations.get(page_id, {})
+            row_updates: Dict[str, str] = {}
+            for prop_name, entries in row_relations.items():
+                column_name = relation_columns.get(prop_name)
+                if not column_name:
+                    continue
+                links: List[Dict[str, Optional[str]]] = []
+                for entry in sorted(entries, key=lambda e: e.get("position", 0)):
+                    target = cached_targets.get(entry.get("to_page_id")) or {}
+                    title = target.get("title") or entry.get("to_page_id") or "…"
+                    links.append(
+                        {
+                            "id": entry.get("to_page_id"),
+                            "title": title,
+                            "url": target.get("url"),
+                        }
+                    )
+                row_updates[column_name] = json.dumps(links)
+            if row_updates:
+                columns_clause = ", ".join([f"{col} = ?" for col in row_updates.keys()])
+                values = list(row_updates.values())
+                values.append(page_id)
+                updates.append((columns_clause, values))
+
+        if not updates:
+            return
+
+        with self._connect() as conn:
+            for columns_clause, values in updates:
+                conn.execute(
+                    f"UPDATE notion_rows SET {columns_clause} WHERE id = ?",  # noqa: S608
+                    values,
+                )
+            conn.commit()
+
     def get_cached_pages(self, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         id_list = list(ids)
         if not id_list:

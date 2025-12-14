@@ -643,6 +643,13 @@ body {
   gap: 6px;
 }
 
+.metric-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
 .metric-label {
   color: var(--text-muted);
   font-size: 13px;
@@ -811,9 +818,16 @@ body {
 .bar--green { fill: #4ade80; }
 .bar--red { fill: #fb7185; }
 .bar--blue { fill: #60a5fa; }
+.legend-dot--amber { background: #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.3); }
 
 .line-dot {
   fill: #a78bfa;
+}
+
+.line-dot--amber {
+  fill: #fbbf24;
+  stroke: rgba(0, 0, 0, 0.08);
+  stroke-width: 1px;
 }
 
 .line-connector {

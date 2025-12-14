@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
 import { fetchTaskDashboardStats } from "./api";
-import type { HeatmapPoint, TaskDashboardStats, WeeklyFlow, WorkspaceOpen } from "./types";
+import type { HeatmapPoint, TaskDashboardStats, WorkspaceOpen } from "./types";
 
 const palette = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#34d399", "#fb7185"];
 
@@ -14,22 +14,23 @@ function formatDateLabel(date: string) {
   return d.toLocaleDateString("de-DE", { month: "short", day: "numeric" });
 }
 
-function DailyFlowChart({
-  data,
-  rangeLabel,
-}: {
-  data: { date: string; created: number; completed: number }[];
-  rangeLabel: string;
-}) {
+function CombinedFlowChart({ data }: { data: { date: string; created: number; completed: number }[] }) {
   const width = Math.max(data.length * 34 + 40, 360);
-  const height = 240;
-  const baseline = height - 36;
-  const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, 1)));
-  const scale = (value: number) => (value / maxValue) * (height - 80);
+  const height = 260;
+  const baseline = height - 44;
+  const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, Math.abs(d.completed - d.created), 1)));
+  const scale = (value: number) => (value / maxValue) * (height - 100);
+
+  let cumulativeNet = 0;
+  const netPoints = data.map((entry, idx) => {
+    cumulativeNet += entry.completed - entry.created;
+    const x = 38 + idx * 34;
+    return { x, y: baseline - scale(cumulativeNet), value: cumulativeNet, label: formatDateLabel(entry.date) };
+  });
 
   return (
     <div className="chart-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`Daily flow ${rangeLabel}`}>
+      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Flow & Net">
         <line x1="32" x2={width - 12} y1={baseline} y2={baseline} className="chart-axis" />
         {data.map((entry, idx) => {
           const x = 32 + idx * 34;
@@ -60,68 +61,27 @@ function DailyFlowChart({
             </g>
           );
         })}
+
+        {netPoints.length > 1 && (
+          <polyline
+            fill="none"
+            stroke="#fbbf24"
+            strokeWidth={2.5}
+            points={netPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+            className="line-connector"
+          />
+        )}
+        {netPoints.map((point) => (
+          <g key={point.x}>
+            <circle cx={point.x} cy={point.y} r={4} className="line-dot line-dot--amber" />
+            <title>{`${point.label}: Net ${formatNumber(point.value)}`}</title>
+          </g>
+        ))}
       </svg>
       <div className="chart-axis-labels">
         <span>0</span>
         <span>{formatNumber(maxValue)}</span>
       </div>
-    </div>
-  );
-}
-
-function WaterfallChart({ data }: { data: WeeklyFlow[] }) {
-  const width = Math.max(data.length * 38 + 32, 360);
-  const height = 220;
-  const baseline = height / 2 + 20;
-  const maxValue = Math.max(...data.map((d) => Math.max(d.incoming, d.completed, Math.abs(d.net), 1)));
-  const scale = (value: number) => (value / maxValue) * (height / 2 - 30);
-
-  return (
-    <div className="chart-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Weekly waterfall">
-        <line x1="28" x2={width - 12} y1={baseline} y2={baseline} className="chart-axis" />
-        {data.map((entry, idx) => {
-          const x = 28 + idx * 38;
-          const incomingHeight = scale(entry.incoming);
-          const completedHeight = scale(entry.completed);
-          const netY = baseline - scale(entry.net);
-          return (
-            <g key={entry.period} transform={`translate(${x}, 0)`}>
-              <rect
-                x={2}
-                y={baseline - incomingHeight}
-                width={12}
-                height={incomingHeight}
-                rx={3}
-                className="bar bar--blue"
-              >
-                <title>{`${entry.period}: Incoming ${entry.incoming}`}</title>
-              </rect>
-              <rect
-                x={16}
-                y={baseline}
-                width={12}
-                height={completedHeight}
-                rx={3}
-                className="bar bar--red"
-                transform={`translate(0, 0) scale(1, -1) translate(0, ${-baseline * 2})`}
-              >
-                <title>{`${entry.period}: Completed ${entry.completed}`}</title>
-              </rect>
-              <circle cx={12} cy={netY} r={3} className="line-dot" />
-              {idx > 0 && (
-                <line
-                  x1={-26}
-                  x2={0}
-                  y1={baseline - scale(data[idx - 1].net)}
-                  y2={netY}
-                  className="line-connector"
-                />
-              )}
-            </g>
-          );
-        })}
-      </svg>
     </div>
   );
 }
@@ -313,7 +273,16 @@ function WorkspacePie({
       return stats.daily_flow.filter((entry) => new Date(entry.date) >= cutoff);
     }, [stats, rangeDays]);
 
-    const waterfallData = useMemo(() => stats?.weekly_flow || [], [stats]);
+    const periodTotals = useMemo(() => {
+      return filteredDailyFlow.reduce(
+        (acc, entry) => {
+          acc.created += entry.created;
+          acc.completed += entry.completed;
+          return acc;
+        },
+        { created: 0, completed: 0 },
+      );
+    }, [filteredDailyFlow]);
 
     const pieData = useMemo(() => {
       const data = stats?.open_by_workspace || [];
@@ -368,20 +337,29 @@ function WorkspacePie({
         <div className="dashboard-grid">
           <div className="metric-card">
             <div className="metric-label">Offene Tasks</div>
-            <div className="metric-value">{formatNumber(stats.summary.open)}</div>
-            <div className="metric-sub">{formatNumber(stats.summary.incoming_last_7d)} eingehend (7d)</div>
+            <div className="metric-split">
+              <div>
+                <div className="metric-sub">Tatsächlich offen</div>
+                <div className="metric-value">{formatNumber(stats.summary.open_active)}</div>
+              </div>
+              <div>
+                <div className="metric-sub">Extern (Outbound)</div>
+                <div className="metric-value">{formatNumber(stats.summary.open_outbound)}</div>
+              </div>
+            </div>
+            <div className="metric-sub">
+              Gesamt: {formatNumber(stats.summary.open_active + stats.summary.open_outbound)}
+            </div>
           </div>
           <div className="metric-card">
-            <div className="metric-label">Erledigt gesamt</div>
-            <div className="metric-value text-green">{formatNumber(stats.summary.completed)}</div>
-            <div className="metric-sub">{formatNumber(stats.summary.completed_last_7d)} erledigt (7d)</div>
+            <div className="metric-label">Erledigt ({rangeDays}d)</div>
+            <div className="metric-value text-green">{formatNumber(periodTotals.completed)}</div>
+            <div className="metric-sub">Gesamt: {formatNumber(stats.summary.completed)}</div>
           </div>
           <div className="metric-card">
             <div className="metric-label">Aktueller Net-Flow</div>
-            <div className="metric-value">
-              {formatNumber(stats.summary.incoming_last_7d - stats.summary.completed_last_7d)}
-            </div>
-            <div className="metric-sub">Letzte 7 Tage</div>
+            <div className="metric-value">{formatNumber(periodTotals.created - periodTotals.completed)}</div>
+            <div className="metric-sub">Letzte {rangeDays} Tage</div>
           </div>
         </div>
       )}
@@ -391,14 +369,15 @@ function WorkspacePie({
           <div className="chart-panel__header">
             <div>
               <div className="muted small">Inflow vs. Done</div>
-              <h4 className="chart-title">Täglicher Durchsatz</h4>
+              <h4 className="chart-title">Durchsatz &amp; Net-Flow</h4>
             </div>
             <div className="legend">
               <span className="legend-dot legend-dot--green" /> Done
               <span className="legend-dot legend-dot--red" /> Created
+              <span className="legend-dot legend-dot--amber" /> Net-Flow (kumuliert)
             </div>
           </div>
-          <DailyFlowChart data={filteredDailyFlow} rangeLabel={`${rangeDays} Tage`} />
+          <CombinedFlowChart data={filteredDailyFlow} />
         </div>
       )}
 
@@ -430,22 +409,6 @@ function WorkspacePie({
           ) : (
             <p className="muted small">Keine Daten für diesen Modus verfügbar.</p>
           )}
-        </div>
-      )}
-
-      {waterfallData.length > 0 && (
-        <div className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <div className="muted small">Weekly Waterfall</div>
-              <h4 className="chart-title">Tasks rein vs. raus</h4>
-            </div>
-            <div className="legend">
-              <span className="legend-dot legend-dot--blue" /> Incoming
-              <span className="legend-dot legend-dot--red" /> Completed
-            </div>
-          </div>
-          <WaterfallChart data={waterfallData} />
         </div>
       )}
 

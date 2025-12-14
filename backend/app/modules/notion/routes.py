@@ -117,10 +117,6 @@ def list_columns():
         {"key": entry.get("column"), "label": name, "type": entry.get("type")}
         for name, entry in property_map.items()
     ]
-    for name, entry in property_map.items():
-        if entry.get("type") == "relation":
-            column_key = f"{entry.get('column') or name}__labels"
-            columns.append({"key": column_key, "label": f"{name} (Relations)", "type": "relation_labels"})
     return jsonify(columns)
 
 
@@ -162,14 +158,10 @@ def list_rows():
         for prop_name, entries in row_relations.items():
             meta = relation_properties.get(prop_name)
             column_base = meta.get("column") if meta else prop_name
-            labels_key = f"{column_base}__labels"
-            links_key = f"{column_base}__links"
-            labels: List[str] = []
             links: List[Dict[str, Optional[str]]] = []
             for entry in sorted(entries, key=lambda e: e.get("position", 0)):
                 target = cached_targets.get(entry.get("to_page_id")) or {}
                 title = target.get("title") or entry.get("to_page_id") or "…"
-                labels.append(title)
                 links.append(
                     {
                         "id": entry.get("to_page_id"),
@@ -177,8 +169,7 @@ def list_rows():
                         "url": target.get("url"),
                     }
                 )
-            row[labels_key] = labels
-            row[links_key] = links
+            row[column_base] = links
 
     return jsonify({"items": rows, "total": total, "limit": limit, "offset": offset})
 

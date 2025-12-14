@@ -21,7 +21,7 @@ class NotionModule(BaseModule):
 
     def get_manifest(self) -> dict:
         manifest = super().get_manifest()
-        manifest["slots"] = ["work_dashboard"]
+        manifest["slots"] = ["work_dashboard", "dashboard_view"]
         return manifest
 
     def check_ready(self) -> bool:

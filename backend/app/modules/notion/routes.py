@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from typing import Dict, List, Optional
 
 from flask import Blueprint, current_app, jsonify, request
@@ -310,6 +311,39 @@ def get_stats():
             ).fetchone()
             last7_completed = last7_completed_row["cnt"] if last7_completed_row else 0
 
+        creation_heatmap_rows = conn.execute(
+            """
+            SELECT CAST(strftime('%w', created_time) AS INTEGER) AS weekday,
+                   CAST(strftime('%H', created_time) AS INTEGER) AS hour,
+                   COUNT(*) AS count
+            FROM notion_rows
+            WHERE created_time IS NOT NULL
+              AND created_time >= date('now', '-120 days')
+            GROUP BY CAST(strftime('%w', created_time) AS INTEGER),
+                     CAST(strftime('%H', created_time) AS INTEGER)
+            ORDER BY weekday, hour
+            """
+        ).fetchall()
+
+        completion_heatmap_rows: List[sqlite3.Row] = []
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            completion_heatmap_rows = conn.execute(
+                f"""
+                SELECT CAST(strftime('%w', {completion_expr}) AS INTEGER) AS weekday,
+                       CAST(strftime('%H', {completion_expr}) AS INTEGER) AS hour,
+                       COUNT(*) AS count
+                FROM notion_rows
+                WHERE {completion_expr} IS NOT NULL
+                  AND {completion_expr} >= date('now', '-120 days')
+                  AND {status_col} IN ({placeholders})
+                GROUP BY CAST(strftime('%w', {completion_expr}) AS INTEGER),
+                         CAST(strftime('%H', {completion_expr}) AS INTEGER)
+                ORDER BY weekday, hour
+                """,
+                done_statuses,
+            ).fetchall()
+
     daily_created_map = {row["date"]: row["created"] for row in created_rows}
     daily_completed_map = {row["date"]: row["completed"] for row in completed_rows}
     all_days = sorted(set(daily_created_map.keys()) | set(daily_completed_map.keys()))
@@ -342,6 +376,14 @@ def get_stats():
                 "incoming_last_7d": last7_incoming["cnt"] if last7_incoming else 0,
                 "completed_last_7d": last7_completed,
             },
+            "creation_heatmap": [
+                {"weekday": row["weekday"], "hour": row["hour"], "count": row["count"]}
+                for row in creation_heatmap_rows
+            ],
+            "completion_heatmap": [
+                {"weekday": row["weekday"], "hour": row["hour"], "count": row["count"]}
+                for row in completion_heatmap_rows
+            ],
         }
     )
 

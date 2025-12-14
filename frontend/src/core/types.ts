@@ -1,4 +1,4 @@
-export type ModuleSlot = "today_view" | "work_dashboard" | "health_view";
+export type ModuleSlot = "today_view" | "work_dashboard" | "dashboard_view" | "health_view";
 
 export interface ModuleManifest {
   id: string;
@@ -13,6 +13,7 @@ export interface ModuleFrontend {
   slots: ModuleSlot[];
   TodayWidget?: React.ComponentType;
   WorkWidget?: React.ComponentType;
+  DashboardWidget?: React.ComponentType;
   HealthWidget?: React.ComponentType;
 }
 

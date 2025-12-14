@@ -711,6 +711,75 @@ body {
   align-items: center;
 }
 
+.heatmap-shell {
+  overflow-x: auto;
+}
+
+.heatmap-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 640px;
+}
+
+.heatmap-hours {
+  display: grid;
+  grid-template-columns: 48px repeat(24, minmax(18px, 1fr));
+  gap: 4px;
+  align-items: center;
+}
+
+.heatmap-hour {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.heatmap-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 4px;
+  align-items: center;
+}
+
+.heatmap-day {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: right;
+  padding-right: 6px;
+}
+
+.heatmap-cells {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(18px, 1fr));
+  gap: 4px;
+}
+
+.heatmap-cell {
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.heatmap-corner {
+  display: block;
+}
+
+.heatmap-legend {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.heatmap-legend-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.12), rgba(96, 165, 250, 0.8));
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 .chart-shell {
   width: 100%;
   overflow-x: auto;

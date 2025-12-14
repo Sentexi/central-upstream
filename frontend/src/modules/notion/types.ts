@@ -32,3 +32,35 @@ export type RowsResponse = {
   limit: number;
   offset: number;
 };
+
+export type DailyFlow = {
+  date: string;
+  created: number;
+  completed: number;
+};
+
+export type WeeklyFlow = {
+  period: string;
+  incoming: number;
+  completed: number;
+  net: number;
+};
+
+export type WorkspaceOpen = {
+  workspace: string;
+  count: number;
+};
+
+export type TaskDashboardSummary = {
+  open: number;
+  completed: number;
+  incoming_last_7d: number;
+  completed_last_7d: number;
+};
+
+export type TaskDashboardStats = {
+  daily_flow: DailyFlow[];
+  weekly_flow: WeeklyFlow[];
+  open_by_workspace: WorkspaceOpen[];
+  summary: TaskDashboardSummary;
+};

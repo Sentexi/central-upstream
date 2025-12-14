@@ -42,6 +42,21 @@ def _resolve_column(property_map: Dict[str, Dict[str, str]], candidates: List[st
     return None
 
 
+def _detect_done_statuses(repo: NotionRepository, status_col: Optional[str]) -> List[str]:
+    if not status_col:
+        return []
+
+    keywords = ["done", "complete", "closed", "finished", "resolved", "erledigt"]
+
+    with repo._connect() as conn:  # noqa: SLF001 - internal helper
+        rows = conn.execute(
+            f"SELECT DISTINCT {status_col} AS status FROM notion_rows WHERE {status_col} IS NOT NULL"
+        ).fetchall()
+
+    statuses = [str(row["status"]) for row in rows if row["status"] is not None]
+    return [status for status in statuses if any(key in status.lower() for key in keywords)]
+
+
 def _build_filters(args, property_map: Dict[str, Dict[str, str]]):
     filters: Dict[str, object] = {}
 
@@ -165,6 +180,168 @@ def list_filters():
             "statuses": distinct(status_col),
             "projects": distinct(project_col),
             "areas": distinct(area_col),
+        }
+    )
+
+
+@bp.get("/stats")
+def get_stats():
+    repo = _get_repo()
+    property_map = repo.get_property_map()
+    status_col = _resolve_column(property_map, ["status"])
+    workspace_col = _resolve_column(property_map, ["workspace", "area", "team"])
+    completion_col = _resolve_column(
+        property_map, ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"]
+    )
+    completion_expr = completion_col or "last_edited_time"
+
+    with repo._connect() as conn:  # noqa: SLF001 - internal helper
+        done_statuses = _detect_done_statuses(repo, status_col)
+
+        created_rows = conn.execute(
+            """
+            SELECT DATE(created_time) AS date, COUNT(*) AS created
+            FROM notion_rows
+            WHERE created_time IS NOT NULL
+              AND created_time >= date('now', '-120 days')
+            GROUP BY DATE(created_time)
+            ORDER BY date
+            """
+        ).fetchall()
+
+        completed_rows = []
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            completed_rows = conn.execute(
+                f"""
+                SELECT DATE({completion_expr}) AS date, COUNT(*) AS completed
+                FROM notion_rows
+                WHERE {completion_expr} IS NOT NULL
+                  AND {completion_expr} >= date('now', '-120 days')
+                  AND {status_col} IN ({placeholders})
+                GROUP BY DATE({completion_expr})
+                ORDER BY date
+                """,
+                done_statuses,
+            ).fetchall()
+
+        weekly_incoming_rows = conn.execute(
+            """
+            SELECT strftime('%Y-W%W', created_time) AS period, COUNT(*) AS incoming
+            FROM notion_rows
+            WHERE created_time IS NOT NULL
+              AND created_time >= date('now', '-180 days')
+            GROUP BY strftime('%Y-%W', created_time)
+            ORDER BY period
+            """
+        ).fetchall()
+
+        weekly_completed_rows = []
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            weekly_completed_rows = conn.execute(
+                f"""
+                SELECT strftime('%Y-W%W', {completion_expr}) AS period, COUNT(*) AS completed
+                FROM notion_rows
+                WHERE {completion_expr} IS NOT NULL
+                  AND {completion_expr} >= date('now', '-180 days')
+                  AND {status_col} IN ({placeholders})
+                GROUP BY strftime('%Y-%W', {completion_expr})
+                ORDER BY period
+                """,
+                done_statuses,
+            ).fetchall()
+
+        workspace_expr = f"COALESCE({workspace_col}, 'Unassigned')" if workspace_col else "'Unassigned'"
+        where_clauses = ["archived = 0"]
+        open_params = []
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            where_clauses.append(f"({status_col} NOT IN ({placeholders}) OR {status_col} IS NULL)")
+            open_params.extend(done_statuses)
+        where_clause = " AND ".join(where_clauses)
+
+        workspace_rows = conn.execute(
+            f"""
+            SELECT {workspace_expr} AS workspace, COUNT(*) AS count
+            FROM notion_rows
+            WHERE {where_clause}
+            GROUP BY {workspace_expr}
+            ORDER BY count DESC
+            LIMIT 18
+            """,
+            open_params,
+        ).fetchall()
+
+        open_count_row = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM notion_rows WHERE {where_clause}", open_params
+        ).fetchone()
+
+        completed_count = 0
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            completed_count_row = conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM notion_rows WHERE {status_col} IN ({placeholders})",
+                done_statuses,
+            ).fetchone()
+            completed_count = completed_count_row["cnt"] if completed_count_row else 0
+
+        last7_incoming = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM notion_rows
+            WHERE created_time IS NOT NULL
+              AND created_time >= date('now', '-7 days')
+            """
+        ).fetchone()
+
+        last7_completed = 0
+        if status_col and done_statuses:
+            placeholders = ",".join(["?"] * len(done_statuses))
+            last7_completed_row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS cnt
+                FROM notion_rows
+                WHERE {completion_expr} IS NOT NULL
+                  AND {completion_expr} >= date('now', '-7 days')
+                  AND {status_col} IN ({placeholders})
+                """,
+                done_statuses,
+            ).fetchone()
+            last7_completed = last7_completed_row["cnt"] if last7_completed_row else 0
+
+    daily_created_map = {row["date"]: row["created"] for row in created_rows}
+    daily_completed_map = {row["date"]: row["completed"] for row in completed_rows}
+    all_days = sorted(set(daily_created_map.keys()) | set(daily_completed_map.keys()))
+    daily_flow = [
+        {"date": day, "created": daily_created_map.get(day, 0), "completed": daily_completed_map.get(day, 0)}
+        for day in all_days
+    ]
+
+    weekly_map: Dict[str, Dict[str, object]] = {}
+    for row in weekly_incoming_rows:
+        weekly_map[row["period"]] = {"period": row["period"], "incoming": row["incoming"], "completed": 0}
+    for row in weekly_completed_rows:
+        entry = weekly_map.setdefault(row["period"], {"period": row["period"], "incoming": 0, "completed": 0})
+        entry["completed"] = row["completed"]
+    weekly_flow = [
+        {**entry, "net": int(entry.get("incoming", 0)) - int(entry.get("completed", 0))}
+        for entry in sorted(weekly_map.values(), key=lambda item: item["period"])
+    ]
+
+    return jsonify(
+        {
+            "daily_flow": daily_flow,
+            "weekly_flow": weekly_flow,
+            "open_by_workspace": [
+                {"workspace": row["workspace"], "count": row["count"]} for row in workspace_rows
+            ],
+            "summary": {
+                "open": open_count_row["cnt"] if open_count_row else 0,
+                "completed": completed_count,
+                "incoming_last_7d": last7_incoming["cnt"] if last7_incoming else 0,
+                "completed_last_7d": last7_completed,
+            },
         }
     )
 

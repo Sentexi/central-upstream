@@ -1,8 +1,8 @@
 import type { ModuleFrontend } from "../../core/types";
-import { NotionTodosView } from "./NotionTodosView";
+import { NotionWorkView } from "./NotionWorkView";
 
 export const moduleFrontend: ModuleFrontend = {
   id: "notion",
   slots: ["work_dashboard"],
-  WorkWidget: NotionTodosView,
+  WorkWidget: NotionWorkView,
 };

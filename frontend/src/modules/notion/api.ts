@@ -1,4 +1,10 @@
-import type { NotionColumn, RowsResponse, SyncResult, SyncStatus } from "./types";
+import type {
+  NotionColumn,
+  RowsResponse,
+  SyncResult,
+  SyncStatus,
+  TaskDashboardStats,
+} from "./types";
 
 const BASE_URL = "/api/modules/notion";
 
@@ -63,4 +69,10 @@ export async function triggerSync(force_full = false): Promise<SyncStatus> {
 export async function fetchSyncStatus(): Promise<SyncStatus> {
   const res = await fetch(`${BASE_URL}/sync/status`);
   return handleSyncResponse(res);
+}
+
+export async function fetchTaskDashboardStats(): Promise<TaskDashboardStats> {
+  const res = await fetch(`${BASE_URL}/stats`);
+  if (!res.ok) throw new Error("Failed to fetch Notion task stats");
+  return res.json();
 }

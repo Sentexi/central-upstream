@@ -208,10 +208,9 @@ class NotionRepository:
                 links: List[Dict[str, Optional[str]]] = []
                 for entry in sorted(entries, key=lambda e: e.get("position", 0)):
                     target = cached_targets.get(entry.get("to_page_id")) or {}
-                    title = target.get("title") or entry.get("to_page_id") or "…"
+                    title = target.get("title") or ""
                     links.append(
                         {
-                            "id": entry.get("to_page_id"),
                             "title": title,
                             "url": target.get("url"),
                         }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
 import { fetchTaskDashboardStats } from "./api";
-import type { TaskDashboardStats, WeeklyFlow, WorkspaceOpen } from "./types";
+import type { HeatmapPoint, TaskDashboardStats, WeeklyFlow, WorkspaceOpen } from "./types";
 
 const palette = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#34d399", "#fb7185"];
 
@@ -21,18 +21,18 @@ function DailyFlowChart({
   data: { date: string; created: number; completed: number }[];
   rangeLabel: string;
 }) {
-  const width = Math.max(data.length * 26 + 32, 320);
+  const width = Math.max(data.length * 34 + 40, 360);
   const height = 240;
-  const baseline = height / 2 + 20;
+  const baseline = height - 36;
   const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, 1)));
-  const scale = (value: number) => (value / maxValue) * (height / 2 - 30);
+  const scale = (value: number) => (value / maxValue) * (height - 80);
 
   return (
     <div className="chart-shell">
       <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`Daily flow ${rangeLabel}`}>
-        <line x1="24" x2={width - 8} y1={baseline} y2={baseline} className="chart-axis" />
+        <line x1="32" x2={width - 12} y1={baseline} y2={baseline} className="chart-axis" />
         {data.map((entry, idx) => {
-          const x = 24 + idx * 26;
+          const x = 32 + idx * 34;
           const completedHeight = scale(entry.completed);
           const createdHeight = scale(entry.created);
           return (
@@ -40,7 +40,7 @@ function DailyFlowChart({
               <rect
                 x={4}
                 y={baseline - completedHeight}
-                width={10}
+                width={12}
                 height={completedHeight}
                 rx={3}
                 className="bar bar--green"
@@ -48,13 +48,12 @@ function DailyFlowChart({
                 <title>{`${formatDateLabel(entry.date)}: Done ${entry.completed}`}</title>
               </rect>
               <rect
-                x={16}
-                y={baseline}
-                width={10}
+                x={20}
+                y={baseline - createdHeight}
+                width={12}
                 height={createdHeight}
                 rx={3}
                 className="bar bar--red"
-                transform={`translate(0, 0) scale(1, -1) translate(0, ${-baseline * 2})`}
               >
                 <title>{`${formatDateLabel(entry.date)}: Created ${entry.created}`}</title>
               </rect>
@@ -123,6 +122,70 @@ function WaterfallChart({ data }: { data: WeeklyFlow[] }) {
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+const heatmapDayOrder = [1, 2, 3, 4, 5, 6, 0];
+const heatmapDayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const bigint = parseInt(normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return { r, g, b };
+}
+
+function HeatmapChart({ data, color, label }: { data: HeatmapPoint[]; color: string; label: string }) {
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const valueMap = new Map(data.map((entry) => [`${entry.weekday}-${entry.hour}`, entry.count]));
+  const maxValue = data.length > 0 ? Math.max(...data.map((d) => d.count)) : 0;
+  const { r, g, b } = hexToRgb(color);
+  const normalizer = maxValue || 1;
+
+  function cellColor(value: number) {
+    const intensity = value === 0 ? 0.1 : 0.2 + (value / normalizer) * 0.65;
+    return `rgba(${r}, ${g}, ${b}, ${intensity.toFixed(2)})`;
+  }
+
+  return (
+    <div className="chart-shell heatmap-shell" role="img" aria-label={`${label} heatmap by day and hour`}>
+      <div className="heatmap-grid">
+        <div className="heatmap-hours" aria-hidden>
+          <span className="heatmap-corner" />
+          {hours.map((hour) => (
+            <span key={hour} className="heatmap-hour">
+              {hour % 3 === 0 ? `${hour.toString().padStart(2, "0")}` : ""}
+            </span>
+          ))}
+        </div>
+        {heatmapDayOrder.map((weekday, idx) => (
+          <div key={weekday} className="heatmap-row">
+            <span className="heatmap-day">{heatmapDayLabels[idx]}</span>
+            <div className="heatmap-cells">
+              {hours.map((hour) => {
+                const value = valueMap.get(`${weekday}-${hour}`) || 0;
+                const tooltip = `${heatmapDayLabels[idx]}, ${hour.toString().padStart(2, "0")}:00 – ${value} ${label.toLowerCase()}`;
+                return (
+                  <span
+                    key={`${weekday}-${hour}`}
+                    className="heatmap-cell"
+                    style={{ backgroundColor: cellColor(value) }}
+                    title={tooltip}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="heatmap-legend" aria-hidden>
+        <span className="muted small">Low</span>
+        <div className="heatmap-legend-bar" style={{ background: `linear-gradient(90deg, rgba(${r}, ${g}, ${b}, 0.12), rgba(${r}, ${g}, ${b}, 0.8))` }} />
+        <span className="muted small">High</span>
+      </div>
     </div>
   );
 }
@@ -214,47 +277,64 @@ function WorkspacePie({
   );
 }
 
-export function NotionTaskDashboard() {
-  const [stats, setStats] = useState<TaskDashboardStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [rangeDays, setRangeDays] = useState(30);
-  const [focusedWorkspace, setFocusedWorkspace] = useState<string | null>(null);
+  export function NotionTaskDashboard() {
+    const [stats, setStats] = useState<TaskDashboardStats | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [rangeDays, setRangeDays] = useState(30);
+    const [focusedWorkspace, setFocusedWorkspace] = useState<string | null>(null);
+    const [heatmapMode, setHeatmapMode] = useState<"created" | "completed">("created");
 
-  useEffect(() => {
-    setLoading(true);
-    fetchTaskDashboardStats()
-      .then((data) => {
-        setStats(data);
-        setError(null);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+    useEffect(() => {
+      setLoading(true);
+      fetchTaskDashboardStats()
+        .then((data) => {
+          setStats(data);
+          setError(null);
+        })
+        .catch((err) => setError(err.message))
+        .finally(() => setLoading(false));
+    }, []);
 
-  const filteredDailyFlow = useMemo(() => {
-    if (!stats) return [];
-    const today = new Date();
-    const cutoff = new Date(today);
-    cutoff.setDate(today.getDate() - rangeDays);
-    return stats.daily_flow.filter((entry) => new Date(entry.date) >= cutoff);
-  }, [stats, rangeDays]);
+    useEffect(() => {
+      if (!stats) return;
+      if (stats.creation_heatmap.length === 0 && stats.completion_heatmap.length > 0) {
+        setHeatmapMode("completed");
+      } else {
+        setHeatmapMode("created");
+      }
+    }, [stats]);
 
-  const waterfallData = useMemo(() => stats?.weekly_flow || [], [stats]);
+    const filteredDailyFlow = useMemo(() => {
+      if (!stats) return [];
+      const today = new Date();
+      const cutoff = new Date(today);
+      cutoff.setDate(today.getDate() - rangeDays);
+      return stats.daily_flow.filter((entry) => new Date(entry.date) >= cutoff);
+    }, [stats, rangeDays]);
 
-  const pieData = useMemo(() => {
-    const data = stats?.open_by_workspace || [];
-    if (!data.length) return data;
-    const maxSlices = 6;
-    if (data.length <= maxSlices) return data;
-    const top = data.slice(0, maxSlices - 1);
-    const rest = data.slice(maxSlices - 1);
-    const otherTotal = rest.reduce((acc, item) => acc + item.count, 0);
-    return [...top, { workspace: "Other", count: otherTotal }];
-  }, [stats]);
+    const waterfallData = useMemo(() => stats?.weekly_flow || [], [stats]);
 
-  const selectedWorkspace =
-    focusedWorkspace && pieData.find((p) => p.workspace === focusedWorkspace) ? focusedWorkspace : null;
+    const pieData = useMemo(() => {
+      const data = stats?.open_by_workspace || [];
+      if (!data.length) return data;
+      const maxSlices = 6;
+      if (data.length <= maxSlices) return data;
+      const top = data.slice(0, maxSlices - 1);
+      const rest = data.slice(maxSlices - 1);
+      const otherTotal = rest.reduce((acc, item) => acc + item.count, 0);
+      return [...top, { workspace: "Other", count: otherTotal }];
+    }, [stats]);
+
+    const selectedWorkspace =
+      focusedWorkspace && pieData.find((p) => p.workspace === focusedWorkspace) ? focusedWorkspace : null;
+
+    const creationHeatmap = stats?.creation_heatmap || [];
+    const completionHeatmap = stats?.completion_heatmap || [];
+    const activeHeatmap = heatmapMode === "created" ? creationHeatmap : completionHeatmap;
+    const activeHeatmapLabel = heatmapMode === "created" ? "Created" : "Done";
+    const activeHeatmapColor = heatmapMode === "created" ? "#60a5fa" : "#4ade80";
+    const hasHeatmapData = creationHeatmap.length > 0 || completionHeatmap.length > 0;
 
   return (
     <GlassCard glow className="notion-dashboard-card">
@@ -319,6 +399,37 @@ export function NotionTaskDashboard() {
             </div>
           </div>
           <DailyFlowChart data={filteredDailyFlow} rangeLabel={`${rangeDays} Tage`} />
+        </div>
+      )}
+
+      {hasHeatmapData && (
+        <div className="chart-panel">
+          <div className="chart-panel__header">
+            <div>
+              <div className="muted small">Zeitliche Verteilung</div>
+              <h4 className="chart-title">Aktivität nach Wochentag &amp; Stunde</h4>
+            </div>
+            <div className="chart-controls" role="group" aria-label="Heatmap Modus">
+              {[
+                { key: "created", label: "Created" },
+                { key: "completed", label: "Done" },
+              ].map((mode) => (
+                <button
+                  key={mode.key}
+                  type="button"
+                  className={`chip ${heatmapMode === mode.key ? "is-active" : ""}`.trim()}
+                  onClick={() => setHeatmapMode(mode.key as "created" | "completed")}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {activeHeatmap.length > 0 ? (
+            <HeatmapChart data={activeHeatmap} color={activeHeatmapColor} label={activeHeatmapLabel} />
+          ) : (
+            <p className="muted small">Keine Daten für diesen Modus verfügbar.</p>
+          )}
         </div>
       )}
 

@@ -51,6 +51,12 @@ export type WorkspaceOpen = {
   count: number;
 };
 
+export type HeatmapPoint = {
+  weekday: number;
+  hour: number;
+  count: number;
+};
+
 export type TaskDashboardSummary = {
   open: number;
   completed: number;
@@ -63,4 +69,6 @@ export type TaskDashboardStats = {
   weekly_flow: WeeklyFlow[];
   open_by_workspace: WorkspaceOpen[];
   summary: TaskDashboardSummary;
+  creation_heatmap: HeatmapPoint[];
+  completion_heatmap: HeatmapPoint[];
 };

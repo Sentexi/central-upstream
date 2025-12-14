@@ -59,6 +59,8 @@ export type HeatmapPoint = {
 
 export type TaskDashboardSummary = {
   open: number;
+  open_active: number;
+  open_outbound: number;
   completed: number;
   incoming_last_7d: number;
   completed_last_7d: number;

@@ -344,6 +344,24 @@ def get_stats():
                 done_statuses,
             ).fetchall()
 
+        def _count_status_matches(status_values: List[str]) -> int:
+            if not status_col or not status_values:
+                return 0
+            placeholders = ",".join(["?"] * len(status_values))
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS cnt
+                FROM notion_rows
+                WHERE archived = 0
+                  AND LOWER({status_col}) IN ({placeholders})
+                """,
+                [value.lower() for value in status_values],
+            ).fetchone()
+            return row["cnt"] if row else 0
+
+        open_active_count = _count_status_matches(["not started", "in progress"])
+        open_outbound_count = _count_status_matches(["outbound"])
+
     daily_created_map = {row["date"]: row["created"] for row in created_rows}
     daily_completed_map = {row["date"]: row["completed"] for row in completed_rows}
     all_days = sorted(set(daily_created_map.keys()) | set(daily_completed_map.keys()))
@@ -372,6 +390,8 @@ def get_stats():
             ],
             "summary": {
                 "open": open_count_row["cnt"] if open_count_row else 0,
+                "open_active": open_active_count,
+                "open_outbound": open_outbound_count,
                 "completed": completed_count,
                 "incoming_last_7d": last7_incoming["cnt"] if last7_incoming else 0,
                 "completed_last_7d": last7_completed,

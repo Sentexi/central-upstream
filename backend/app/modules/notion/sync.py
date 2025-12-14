@@ -1,14 +1,20 @@
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import current_app
 
 from app.core.settings_storage import settings_storage
 from .notion_client import NotionClient
 from .repository import NotionRepository
-from .utils import extract_property_value, map_notion_type_to_sqlite, normalize_column_name
+from .utils import (
+    extract_property_value,
+    extract_rich_text,
+    map_notion_type_to_sqlite,
+    normalize_column_name,
+)
 
 
 class SyncResult(Dict):
@@ -98,6 +104,63 @@ def _row_from_page(page: Dict[str, any], property_map: Dict[str, Dict[str, str]]
         value = extract_property_value(notion_prop, meta.get("type"))
         row[meta.get("column") or prop_name] = value
     return row
+
+
+def _extract_relations_from_page(page: Dict[str, any]) -> Tuple[List[Tuple[str, str, int]], Set[str]]:
+    properties = page.get("properties") or {}
+    relations: List[Tuple[str, str, int]] = []
+    targets: Set[str] = set()
+    for prop_name, prop_value in properties.items():
+        if not isinstance(prop_value, dict):
+            continue
+        if prop_value.get("type") != "relation":
+            continue
+        rel_entries = prop_value.get("relation") or []
+        for idx, rel in enumerate(rel_entries):
+            to_page_id = rel.get("id") or rel.get("page_id")
+            if not to_page_id:
+                continue
+            relations.append((prop_name, to_page_id, idx))
+            targets.add(to_page_id)
+    return relations, targets
+
+
+def _extract_page_title(page: Dict[str, any]) -> str:
+    properties = page.get("properties") or {}
+    for prop in properties.values():
+        if isinstance(prop, dict) and prop.get("type") == "title":
+            title_blocks = prop.get("title") or []
+            return extract_rich_text(title_blocks) or ""
+    return ""
+
+
+def _resolve_relation_targets(
+    client: NotionClient, repo: NotionRepository, target_ids: Iterable[str], max_workers: int = 3
+):
+    ids = list(dict.fromkeys(target_ids))
+    if not ids:
+        return
+
+    synced_at = datetime.utcnow().isoformat() + "Z"
+
+    def fetch_and_store(page_id: str):
+        try:
+            page = client.retrieve_page(page_id)
+            title = _extract_page_title(page)
+            repo.upsert_page_cache(
+                page_id=page_id,
+                title=title or page_id,
+                url=page.get("url"),
+                last_edited_time=page.get("last_edited_time"),
+                raw_json=page,
+                synced_at=synced_at,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            current_app.logger.warning("Failed to resolve relation target %s: %s", page_id, exc)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for pid in ids:
+            executor.submit(fetch_and_store, pid)
 
 
 def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None) -> SyncResult:
@@ -198,6 +261,8 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     if progress_callback:
         progress_callback(0, total_pages)
 
+    relation_targets: Set[str] = set()
+
     for page in pages:
         fetched_count += 1
         repo.upsert_page_raw(
@@ -210,9 +275,16 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
         )
         row_data = _row_from_page(page, property_map)
         repo.upsert_row(row_data)
+        relations, targets = _extract_relations_from_page(page)
+        repo.replace_relations_for_page(page.get("id"), relations)
+        relation_targets.update(targets)
         upserted_count += 1
         if progress_callback:
             progress_callback(upserted_count, total_pages)
+
+    missing_relation_targets = repo.filter_missing_or_stale_targets(relation_targets)
+    if missing_relation_targets:
+        _resolve_relation_targets(client, repo, missing_relation_targets)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     repo.set_meta("last_full_sync", now_iso)

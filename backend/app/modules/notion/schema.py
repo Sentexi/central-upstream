@@ -35,6 +35,37 @@ def ensure_schema(db_path: str):
             )
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notion_relations (
+                from_page_id TEXT NOT NULL,
+                property_name TEXT NOT NULL,
+                to_page_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (from_page_id, property_name, to_page_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notion_relations_from ON notion_relations(from_page_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notion_relations_to ON notion_relations(to_page_id)"
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notion_page_cache (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                url TEXT,
+                last_edited_time TEXT,
+                raw_json TEXT,
+                synced_at TEXT
+            )
+            """
+        )
         conn.commit()
 
 

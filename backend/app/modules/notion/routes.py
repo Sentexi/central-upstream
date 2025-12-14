@@ -1,5 +1,5 @@
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -117,6 +117,10 @@ def list_columns():
         {"key": entry.get("column"), "label": name, "type": entry.get("type")}
         for name, entry in property_map.items()
     ]
+    for name, entry in property_map.items():
+        if entry.get("type") == "relation":
+            column_key = f"{entry.get('column') or name}__labels"
+            columns.append({"key": column_key, "label": f"{name} (Relations)", "type": "relation_labels"})
     return jsonify(columns)
 
 
@@ -138,7 +142,44 @@ def list_rows():
             filters = {}
 
     property_map = repo.get_property_map()
+    relation_properties: Dict[str, Dict[str, str]] = {
+        name: meta for name, meta in property_map.items() if meta.get("type") == "relation"
+    }
+
     rows, total = repo.query_rows(property_map, q=q, filters=filters, sort=sort, limit=limit, offset=offset)
+
+    from_page_ids: List[str] = [row.get("id") for row in rows if row.get("id")]
+    relations = repo.get_relations_for_pages(from_page_ids)
+
+    to_page_ids: Set[str] = set()
+    for rels in relations.values():
+        for entries in rels.values():
+            to_page_ids.update(entry.get("to_page_id") for entry in entries if entry.get("to_page_id"))
+    cached_targets = repo.get_cached_pages(to_page_ids)
+
+    for row in rows:
+        row_relations = relations.get(row.get("id"), {})
+        for prop_name, entries in row_relations.items():
+            meta = relation_properties.get(prop_name)
+            column_base = meta.get("column") if meta else prop_name
+            labels_key = f"{column_base}__labels"
+            links_key = f"{column_base}__links"
+            labels: List[str] = []
+            links: List[Dict[str, Optional[str]]] = []
+            for entry in sorted(entries, key=lambda e: e.get("position", 0)):
+                target = cached_targets.get(entry.get("to_page_id")) or {}
+                title = target.get("title") or entry.get("to_page_id") or "…"
+                labels.append(title)
+                links.append(
+                    {
+                        "id": entry.get("to_page_id"),
+                        "title": title,
+                        "url": target.get("url"),
+                    }
+                )
+            row[labels_key] = labels
+            row[links_key] = links
+
     return jsonify({"items": rows, "total": total, "limit": limit, "offset": offset})
 
 

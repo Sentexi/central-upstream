@@ -1,7 +1,8 @@
 import json
 import os
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .schema import ensure_schema
 
@@ -124,6 +125,111 @@ class NotionRepository:
         )
         with self._connect() as conn:
             conn.execute(sql, row_data)
+            conn.commit()
+
+    def replace_relations_for_page(
+        self, page_id: str, relations: Iterable[Tuple[str, str, int]]
+    ) -> None:
+        rows = [(page_id, prop, target, pos) for prop, target, pos in relations]
+        with self._connect() as conn:
+            conn.execute("DELETE FROM notion_relations WHERE from_page_id = ?", (page_id,))
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO notion_relations
+                    (from_page_id, property_name, to_page_id, position)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
+
+    def get_relations_for_pages(
+        self, page_ids: Iterable[str]
+    ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        page_ids = list(page_ids)
+        if not page_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(page_ids))
+        sql = (
+            f"SELECT from_page_id, property_name, to_page_id, position "
+            f"FROM notion_relations WHERE from_page_id IN ({placeholders})"
+            " ORDER BY position"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, page_ids).fetchall()
+
+        relations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        for row in rows:
+            page_relations = relations.setdefault(row["from_page_id"], {})
+            prop_relations = page_relations.setdefault(row["property_name"], [])
+            prop_relations.append(
+                {
+                    "to_page_id": row["to_page_id"],
+                    "position": row["position"],
+                }
+            )
+        return relations
+
+    def get_cached_pages(self, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        id_list = list(ids)
+        if not id_list:
+            return {}
+        placeholders = ",".join(["?"] * len(id_list))
+        sql = f"SELECT * FROM notion_page_cache WHERE id IN ({placeholders})"
+        with self._connect() as conn:
+            rows = conn.execute(sql, id_list).fetchall()
+        return {row["id"]: dict(row) for row in rows}
+
+    def filter_missing_or_stale_targets(
+        self, ids: Iterable[str], max_age_days: int = 7
+    ) -> List[str]:
+        id_list = list(ids)
+        if not id_list:
+            return []
+
+        cached = self.get_cached_pages(id_list)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        missing: List[str] = []
+        for page_id in id_list:
+            entry = cached.get(page_id)
+            if not entry:
+                missing.append(page_id)
+                continue
+            synced_at = entry.get("synced_at")
+            try:
+                synced_dt = datetime.fromisoformat(synced_at.replace("Z", "+00:00")) if synced_at else None
+            except ValueError:
+                synced_dt = None
+            if not synced_dt or synced_dt < cutoff:
+                missing.append(page_id)
+        return missing
+
+    def upsert_page_cache(
+        self,
+        page_id: str,
+        title: Optional[str],
+        url: Optional[str],
+        last_edited_time: Optional[str],
+        raw_json: Optional[dict],
+        synced_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO notion_page_cache
+                (id, title, url, last_edited_time, raw_json, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    page_id,
+                    title,
+                    url,
+                    last_edited_time,
+                    json.dumps(raw_json) if raw_json is not None else None,
+                    synced_at,
+                ),
+            )
             conn.commit()
 
     # Queries

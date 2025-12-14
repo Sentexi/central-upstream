@@ -4,6 +4,7 @@ from typing import Iterable
 
 def ensure_schema(db_path: str):
     with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS notion_meta (

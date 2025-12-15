@@ -6,6 +6,12 @@ export type NotionColumn = {
 
 export type NotionRow = Record<string, unknown>;
 
+export type RelationLink = {
+  id?: string | null;
+  title?: string | null;
+  url?: string | null;
+};
+
 export type SyncResult = {
   ok: boolean;
   mode: string;

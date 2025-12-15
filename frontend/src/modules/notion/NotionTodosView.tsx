@@ -1,23 +1,70 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
 import { fetchColumns, fetchRows, fetchSyncStatus, triggerSync } from "./api";
-import type { NotionColumn, NotionRow, SyncResult, SyncStatus } from "./types";
+import type { NotionColumn, NotionRow, RelationLink, SyncResult, SyncStatus } from "./types";
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.map((v) => formatValue(v)).join(", ");
   if (typeof value === "object") return JSON.stringify(value);
-  if (typeof value === "boolean") return value ? "Yes" : "No";
   return String(value);
 }
 
-function renderCell(columnKey: string, value: unknown) {
-  if (typeof value === "string" && columnKey.toLowerCase().includes("url")) {
+function renderRelation(value: unknown): JSX.Element | string {
+  if (!Array.isArray(value) || value.length === 0) return "—";
+
+  const items = value as RelationLink[];
+
+  return (
+    <div className="relation-chips" role="list">
+      {items.map((item, index) => {
+        const title = item.title || item.id || "…";
+        const content = item.url ? (
+          <a href={item.url} target="_blank" rel="noreferrer">
+            {title}
+          </a>
+        ) : (
+          title
+        );
+        return (
+          <span className="relation-chip" key={`${item.id || title}-${index}`} role="listitem">
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderCell(column: NotionColumn, row: NotionRow) {
+  const value = row[column.key];
+
+  if (column.type === "relation_labels" || column.type === "relation_links") {
+    const linkKey = column.key.endsWith("__labels")
+      ? `${column.key.slice(0, -"__labels".length)}__links`
+      : column.key;
+    const relationValue = row[linkKey] ?? value;
+    return renderRelation(relationValue as RelationLink[]);
+  }
+
+  if (typeof value === "string" && column.key.toLowerCase().includes("url")) {
     return (
       <a href={value} target="_blank" rel="noreferrer">
         {value}
       </a>
     );
+  }
+
+  if (Array.isArray(value) && value.every((item) => typeof item === "object")) {
+    const stringified = (value as Record<string, unknown>[]).map((item) =>
+      formatValue(item.title || item.name || item.id || JSON.stringify(item))
+    );
+    return renderRelation(stringified.map((title) => ({ title })) as RelationLink[]);
+  }
+
+  if (Array.isArray(value)) {
+    return renderRelation(value.map((val) => ({ title: formatValue(val) })) as RelationLink[]);
   }
 
   return formatValue(value);
@@ -307,7 +354,7 @@ export function NotionTodosView() {
                 return (
                   <tr key={rowId}>
                     {displayedColumns.map((column) => (
-                      <td key={column.key}>{renderCell(column.key, row[column.key])}</td>
+                      <td key={column.key}>{renderCell(column, row)}</td>
                     ))}
                   </tr>
                 );

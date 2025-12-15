@@ -1,7 +1,8 @@
 import json
 import os
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .schema import ensure_schema
 
@@ -124,6 +125,191 @@ class NotionRepository:
         )
         with self._connect() as conn:
             conn.execute(sql, row_data)
+            conn.commit()
+
+    def replace_relations_for_page(
+        self, page_id: str, relations: Iterable[Dict[str, Any]]
+    ) -> None:
+        rows = [
+            (
+                page_id,
+                rel.get("property_name"),
+                rel.get("property_value"),
+                rel.get("to_page_id"),
+                rel.get("position", 0),
+                rel.get("value"),
+            )
+            for rel in relations
+        ]
+        with self._connect() as conn:
+            conn.execute("DELETE FROM notion_relations WHERE from_page_id = ?", (page_id,))
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO notion_relations
+                    (from_page_id, property_name, property_value, to_page_id, position, value)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
+
+    def get_relations_for_pages(
+        self, page_ids: Iterable[str]
+    ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        page_ids = list(page_ids)
+        if not page_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(page_ids))
+        sql = (
+            f"SELECT from_page_id, property_name, property_value, to_page_id, position, value "
+            f"FROM notion_relations WHERE from_page_id IN ({placeholders})"
+            " ORDER BY position"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, page_ids).fetchall()
+
+        relations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        for row in rows:
+            page_relations = relations.setdefault(row["from_page_id"], {})
+            prop_relations = page_relations.setdefault(row["property_name"], [])
+            prop_relations.append(
+                {
+                    "to_page_id": row["to_page_id"],
+                    "position": row["position"],
+                    "property_value": row["property_value"],
+                    "value": row["value"],
+                }
+            )
+        return relations
+
+    def update_relation_columns(self, property_map: Dict[str, Dict[str, Any]]) -> None:
+        relation_properties: Dict[str, Dict[str, Any]] = {
+            name: meta for name, meta in property_map.items() if meta.get("type") == "relation"
+        }
+        if not relation_properties:
+            return
+
+        relation_columns = {name: meta.get("column") or name for name, meta in relation_properties.items()}
+
+        with self._connect() as conn:
+            page_rows = conn.execute("SELECT id FROM notion_rows").fetchall()
+            page_ids = [row["id"] for row in page_rows if row["id"]]
+
+        if not page_ids:
+            return
+
+        relations = self.get_relations_for_pages(page_ids)
+
+        to_page_ids: List[str] = []
+        for rels in relations.values():
+            for entries in rels.values():
+                to_page_ids.extend(
+                    [entry.get("to_page_id") for entry in entries if entry.get("to_page_id")]
+                )
+        cached_targets = self.get_cached_pages(to_page_ids)
+
+        updates: List[Tuple[Any, ...]] = []
+        for page_id in page_ids:
+            row_relations = relations.get(page_id, {})
+            row_updates: Dict[str, str] = {}
+            for prop_name, entries in row_relations.items():
+                column_name = relation_columns.get(prop_name)
+                if not column_name:
+                    column_name = next(
+                        (
+                            entry.get("property_value")
+                            for entry in entries
+                            if entry.get("property_value")
+                        ),
+                        None,
+                    )
+                if not column_name:
+                    continue
+                relation_values: List[Optional[str]] = []
+                for entry in sorted(entries, key=lambda e: e.get("position", 0)):
+                    target = cached_targets.get(entry.get("to_page_id")) or {}
+                    title = target.get("title") or ""
+                    relation_value = entry.get("value") or title or entry.get("to_page_id")
+                    relation_values.append(relation_value)
+                if relation_values:
+                    row_updates[column_name] = json.dumps(relation_values)
+            if row_updates:
+                columns_clause = ", ".join([f"{col} = ?" for col in row_updates.keys()])
+                values = list(row_updates.values())
+                values.append(page_id)
+                updates.append((columns_clause, values))
+
+        if not updates:
+            return
+
+        with self._connect() as conn:
+            for columns_clause, values in updates:
+                conn.execute(
+                    f"UPDATE notion_rows SET {columns_clause} WHERE id = ?",  # noqa: S608
+                    values,
+                )
+            conn.commit()
+
+    def get_cached_pages(self, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        id_list = list(ids)
+        if not id_list:
+            return {}
+        placeholders = ",".join(["?"] * len(id_list))
+        sql = f"SELECT * FROM notion_page_cache WHERE id IN ({placeholders})"
+        with self._connect() as conn:
+            rows = conn.execute(sql, id_list).fetchall()
+        return {row["id"]: dict(row) for row in rows}
+
+    def filter_missing_or_stale_targets(
+        self, ids: Iterable[str], max_age_days: int = 7
+    ) -> List[str]:
+        id_list = list(ids)
+        if not id_list:
+            return []
+
+        cached = self.get_cached_pages(id_list)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        missing: List[str] = []
+        for page_id in id_list:
+            entry = cached.get(page_id)
+            if not entry:
+                missing.append(page_id)
+                continue
+            synced_at = entry.get("synced_at")
+            try:
+                synced_dt = datetime.fromisoformat(synced_at.replace("Z", "+00:00")) if synced_at else None
+            except ValueError:
+                synced_dt = None
+            if not synced_dt or synced_dt < cutoff:
+                missing.append(page_id)
+        return missing
+
+    def upsert_page_cache(
+        self,
+        page_id: str,
+        title: Optional[str],
+        url: Optional[str],
+        last_edited_time: Optional[str],
+        raw_json: Optional[dict],
+        synced_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO notion_page_cache
+                (id, title, url, last_edited_time, raw_json, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    page_id,
+                    title,
+                    url,
+                    last_edited_time,
+                    json.dumps(raw_json) if raw_json is not None else None,
+                    synced_at,
+                ),
+            )
             conn.commit()
 
     # Queries

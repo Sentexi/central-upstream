@@ -5,6 +5,28 @@ import type { HeatmapPoint, TaskDashboardStats, WorkspaceOpen } from "./types";
 
 const palette = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#34d399", "#fb7185"];
 
+type FlowView = "7d" | "14d" | "30d" | "60d" | "90d" | "ytd" | "previous-years";
+
+const flowViewOptions: { key: FlowView; label: string }[] = [
+  { key: "7d", label: "7d" },
+  { key: "14d", label: "14d" },
+  { key: "30d", label: "30d" },
+  { key: "60d", label: "60d" },
+  { key: "90d", label: "90d" },
+  { key: "ytd", label: "YTD" },
+  { key: "previous-years", label: "Vorjahre" },
+];
+
+const flowViewLabels: Record<FlowView, string> = {
+  "7d": "7 Tage",
+  "14d": "14 Tage",
+  "30d": "30 Tage",
+  "60d": "60 Tage",
+  "90d": "90 Tage",
+  ytd: "Aktuelles Jahr (YTD)",
+  "previous-years": "Frühere Jahre",
+};
+
 function formatNumber(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "–";
@@ -13,15 +35,104 @@ function formatNumber(value?: number | null) {
   return value.toLocaleString("de-DE");
 }
 
+type FlowChartDatum = {
+  id: string;
+  label: string;
+  tooltipLabel: string;
+  created: number;
+  completed: number;
+};
+
 function formatDateLabel(date: string) {
   const d = new Date(date);
   return d.toLocaleDateString("de-DE", { month: "short", day: "numeric" });
 }
 
-function CombinedFlowChart({ data }: { data: { date: string; created: number; completed: number }[] }) {
-  const width = Math.max(data.length * 44 + 96, 420);
+function startOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = (day + 6) % 7; // Monday as start of week
+  d.setDate(d.getDate() - diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatWeekLabel(start: Date) {
+  return start.toLocaleDateString("de-DE", { month: "short", day: "numeric" });
+}
+
+function formatWeekTooltip(start: Date) {
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const startLabel = start.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  const endLabel = end.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  return `${startLabel} – ${endLabel}`;
+}
+
+function formatMonthLabel(date: Date) {
+  return date.toLocaleDateString("de-DE", { month: "short", year: "numeric" });
+}
+
+function groupFlowByWeek(flow: { date: string; created: number; completed: number }[]): FlowChartDatum[] {
+  const buckets = new Map<
+    string,
+    { created: number; completed: number; start: Date }
+  >();
+
+  flow.forEach((entry) => {
+    const start = startOfWeek(new Date(entry.date));
+    const key = start.toISOString().slice(0, 10);
+    const bucket = buckets.get(key) || { created: 0, completed: 0, start };
+    bucket.created += entry.created;
+    bucket.completed += entry.completed;
+    buckets.set(key, bucket);
+  });
+
+  return Array.from(buckets.entries())
+    .map(([key, bucket]) => ({
+      id: key,
+      label: formatWeekLabel(bucket.start),
+      tooltipLabel: formatWeekTooltip(bucket.start),
+      created: bucket.created,
+      completed: bucket.completed,
+    }))
+    .sort((a, b) => new Date(a.id).getTime() - new Date(b.id).getTime());
+}
+
+function groupFlowByMonth(flow: { date: string; created: number; completed: number }[]): FlowChartDatum[] {
+  const buckets = new Map<
+    string,
+    { created: number; completed: number; start: Date }
+  >();
+
+  flow.forEach((entry) => {
+    const d = new Date(entry.date);
+    const start = new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1));
+    const key = start.toISOString().slice(0, 7);
+    const bucket = buckets.get(key) || { created: 0, completed: 0, start };
+    bucket.created += entry.created;
+    bucket.completed += entry.completed;
+    buckets.set(key, bucket);
+  });
+
+  return Array.from(buckets.entries())
+    .map(([key, bucket]) => ({
+      id: key,
+      label: formatMonthLabel(bucket.start),
+      tooltipLabel: formatMonthLabel(bucket.start),
+      created: bucket.created,
+      completed: bucket.completed,
+    }))
+    .sort((a, b) => new Date(a.id).getTime() - new Date(b.id).getTime());
+}
+
+function CombinedFlowChart({ data }: { data: FlowChartDatum[] }) {
   const height = 300;
   const margin = { top: 28, right: 18, bottom: 78, left: 60 };
+  const barGroupWidth = 52;
+  const barWidth = 14;
+  const barGap = 8;
+  const chartWidth = Math.max(data.length * barGroupWidth + margin.left + margin.right, 560);
   const innerHeight = height - margin.top - margin.bottom;
 
   let cumulativeNet = 0;
@@ -31,8 +142,8 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
     cumulativeNet += entry.created - entry.completed;
     netMin = Math.min(netMin, cumulativeNet);
     netMax = Math.max(netMax, cumulativeNet);
-    const x = margin.left + idx * 44 + 16;
-    return { x, y: cumulativeNet, value: cumulativeNet, label: formatDateLabel(entry.date) };
+    const x = margin.left + idx * barGroupWidth + barGroupWidth / 2;
+    return { x, y: cumulativeNet, value: cumulativeNet, label: entry.tooltipLabel };
   });
 
   const maxCompleted = Math.max(...data.map((d) => d.completed), 0);
@@ -49,16 +160,22 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
   ) as number[];
 
   return (
-    <div className="chart-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Flow & Net">
-        <line x1={margin.left} x2={width - margin.right} y1={zeroY} y2={zeroY} className="chart-axis" />
+    <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
+      <svg
+        viewBox={`0 0 ${chartWidth} ${height}`}
+        className="chart-svg"
+        role="img"
+        aria-label="Flow & Net"
+        style={{ minWidth: chartWidth, width: chartWidth }}
+      >
+        <line x1={margin.left} x2={chartWidth - margin.right} y1={zeroY} y2={zeroY} className="chart-axis" />
         <line x1={margin.left} x2={margin.left} y1={height - margin.bottom} y2={margin.top} className="chart-axis" />
 
         {yTicks.map((tick) => {
           const y = valueToY(tick);
           return (
             <g key={tick}>
-              <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
+              <line x1={margin.left} x2={chartWidth - margin.right} y1={y} y2={y} className="chart-grid" />
               <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
                 {formatNumber(tick)}
               </text>
@@ -67,31 +184,33 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
         })}
 
         {data.map((entry, idx) => {
-          const groupX = margin.left + idx * 44;
+          const groupX = margin.left + idx * barGroupWidth;
           const completedY = valueToY(entry.completed);
           const completedHeight = zeroY - completedY;
           const createdHeight = valueToY(-entry.created) - zeroY;
+          const firstBarX = groupX + (barGroupWidth - barWidth * 2 - barGap) / 2;
+          const secondBarX = firstBarX + barWidth + barGap;
           return (
-            <g key={entry.date}>
+            <g key={entry.id}>
               <rect
-                x={groupX + 4}
+                x={firstBarX}
                 y={completedY}
-                width={14}
+                width={barWidth}
                 height={completedHeight}
                 rx={3}
                 className="bar bar--green"
               >
-                <title>{`${formatDateLabel(entry.date)}: Done ${entry.completed}`}</title>
+                <title>{`${entry.tooltipLabel}: Done ${entry.completed}`}</title>
               </rect>
               <rect
-                x={groupX + 22}
+                x={secondBarX}
                 y={zeroY}
-                width={14}
+                width={barWidth}
                 height={createdHeight}
                 rx={3}
                 className="bar bar--red"
               >
-                <title>{`${formatDateLabel(entry.date)}: Created ${entry.created}`}</title>
+                <title>{`${entry.tooltipLabel}: Created ${entry.created}`}</title>
               </rect>
             </g>
           );
@@ -114,15 +233,15 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
         ))}
 
         {data.map((entry, idx) => {
-          const labelX = margin.left + idx * 44 + 18;
+          const labelX = margin.left + idx * barGroupWidth + barGroupWidth / 2;
           return (
-            <text key={`label-${entry.date}`} x={labelX} y={height - margin.bottom + 22} className="chart-date-label" textAnchor="middle">
-              {formatDateLabel(entry.date)}
+            <text key={`label-${entry.id}`} x={labelX} y={height - margin.bottom + 22} className="chart-date-label" textAnchor="middle">
+              {entry.label}
             </text>
           );
         })}
 
-        <text x={width / 2} y={height - 14} className="chart-axis-title" textAnchor="middle">
+          <text x={chartWidth / 2} y={height - 14} className="chart-axis-title" textAnchor="middle">
           Datum
         </text>
         <text x={-height / 2} y={18} transform="rotate(-90)" className="chart-axis-title" textAnchor="middle">
@@ -284,11 +403,11 @@ function WorkspacePie({
   );
 }
 
-  export function NotionTaskDashboard() {
+export function NotionTaskDashboard() {
     const [stats, setStats] = useState<TaskDashboardStats | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [rangeDays, setRangeDays] = useState(30);
+    const [view, setView] = useState<FlowView>("30d");
     const [focusedWorkspace, setFocusedWorkspace] = useState<string | null>(null);
     const [heatmapMode, setHeatmapMode] = useState<"created" | "completed">("created");
 
@@ -312,16 +431,35 @@ function WorkspacePie({
       }
     }, [stats]);
 
-    const filteredDailyFlow = useMemo(() => {
+    const filteredFlow = useMemo(() => {
       if (!stats) return [];
       const today = new Date();
+      const daily = stats.daily_flow;
+
+      if (view === "previous-years") {
+        return daily.filter((entry) => new Date(entry.date).getFullYear() < today.getFullYear());
+      }
+
+      if (view === "ytd") {
+        const startOfYear = new Date(today.getFullYear(), 0, 1);
+        return daily.filter((entry) => new Date(entry.date) >= startOfYear);
+      }
+
+      const daysLookup: Record<Exclude<FlowView, "ytd" | "previous-years">, number> = {
+        "7d": 7,
+        "14d": 14,
+        "30d": 30,
+        "60d": 60,
+        "90d": 90,
+      };
+      const days = daysLookup[view] || 30;
       const cutoff = new Date(today);
-      cutoff.setDate(today.getDate() - rangeDays);
-      return stats.daily_flow.filter((entry) => new Date(entry.date) >= cutoff);
-    }, [stats, rangeDays]);
+      cutoff.setDate(today.getDate() - days);
+      return daily.filter((entry) => new Date(entry.date) >= cutoff);
+    }, [stats, view]);
 
     const periodTotals = useMemo(() => {
-      return filteredDailyFlow.reduce(
+      return filteredFlow.reduce(
         (acc, entry) => {
           acc.created += entry.created;
           acc.completed += entry.completed;
@@ -329,7 +467,32 @@ function WorkspacePie({
         },
         { created: 0, completed: 0 },
       );
-    }, [filteredDailyFlow]);
+    }, [filteredFlow]);
+
+    const chartData = useMemo<FlowChartDatum[]>(() => {
+      if (!filteredFlow.length) return [];
+
+      if (view === "7d" || view === "14d") {
+        return filteredFlow.map((entry) => ({
+          id: entry.date,
+          label: formatDateLabel(entry.date),
+          tooltipLabel: new Date(entry.date).toLocaleDateString("de-DE", {
+            weekday: "short",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }),
+          created: entry.created,
+          completed: entry.completed,
+        }));
+      }
+
+      if (view === "previous-years") {
+        return groupFlowByMonth(filteredFlow);
+      }
+
+      return groupFlowByWeek(filteredFlow);
+    }, [filteredFlow, view]);
 
     const netFlowValue = periodTotals.created - periodTotals.completed;
     const netFlowClass = netFlowValue <= 0 ? "text-green" : "text-red";
@@ -354,6 +517,7 @@ function WorkspacePie({
     const activeHeatmapLabel = heatmapMode === "created" ? "Created" : "Done";
     const activeHeatmapColor = heatmapMode === "created" ? "#60a5fa" : "#4ade80";
     const hasHeatmapData = creationHeatmap.length > 0 || completionHeatmap.length > 0;
+    const periodLabel = flowViewLabels[view];
 
   return (
     <GlassCard glow className="notion-dashboard-card">
@@ -367,14 +531,14 @@ function WorkspacePie({
           </p>
         </div>
         <div className="chart-controls" role="group" aria-label="Zeitraum filtern">
-          {[14, 30, 60, 90].map((days) => (
+          {flowViewOptions.map((option) => (
             <button
-              key={days}
+              key={option.key}
               type="button"
-              className={`chip ${rangeDays === days ? "is-active" : ""}`.trim()}
-              onClick={() => setRangeDays(days)}
+              className={`chip ${view === option.key ? "is-active" : ""}`.trim()}
+              onClick={() => setView(option.key)}
             >
-              {days}d
+              {option.label}
             </button>
           ))}
         </div>
@@ -402,24 +566,24 @@ function WorkspacePie({
             </div>
           </div>
           <div className="metric-card">
-            <div className="metric-label">Erledigt ({rangeDays}d)</div>
+            <div className="metric-label">Erledigt ({periodLabel})</div>
             <div className="metric-value text-green">{formatNumber(periodTotals.completed)}</div>
             <div className="metric-sub">Gesamt: {formatNumber(stats.summary.completed)}</div>
           </div>
           <div className="metric-card">
-            <div className="metric-label">Erstellt ({rangeDays}d)</div>
+            <div className="metric-label">Erstellt ({periodLabel})</div>
             <div className="metric-value text-red">{formatNumber(periodTotals.created)}</div>
             <div className="metric-sub">Gesamt: {formatNumber(stats.summary.created)}</div>
           </div>
           <div className="metric-card">
             <div className="metric-label">Aktueller Net-Flow</div>
             <div className={`metric-value ${netFlowClass}`.trim()}>{formatNumber(netFlowValue)}</div>
-            <div className="metric-sub">Letzte {rangeDays} Tage</div>
+            <div className="metric-sub">Ansicht: {periodLabel}</div>
           </div>
         </div>
       )}
 
-      {filteredDailyFlow.length > 0 && (
+      {chartData.length > 0 && (
         <div className="chart-panel">
           <div className="chart-panel__header">
             <div>
@@ -432,7 +596,7 @@ function WorkspacePie({
               <span className="legend-dot legend-dot--amber" /> Net-Flow (kumuliert)
             </div>
           </div>
-          <CombinedFlowChart data={filteredDailyFlow} />
+          <CombinedFlowChart data={chartData} />
         </div>
       )}
 

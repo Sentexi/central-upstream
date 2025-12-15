@@ -21,7 +21,17 @@ def normalize_column_name(name: str, existing: Iterable[str]) -> str:
 
 
 def map_notion_type_to_sqlite(notion_type: str) -> str:
-    if notion_type in {"title", "rich_text", "select", "status", "email", "url", "phone_number"}:
+    if notion_type in {
+        "title",
+        "rich_text",
+        "select",
+        "status",
+        "email",
+        "url",
+        "phone_number",
+        "created_time",
+        "last_edited_time",
+    }:
         return "TEXT"
     if notion_type == "number":
         return "REAL"
@@ -75,6 +85,8 @@ def extract_property_value(prop: Dict[str, Any], notion_type: str) -> Any:
         if isinstance(date_obj, dict):
             return date_obj.get("start")
         return None
+    if notion_type in {"created_time", "last_edited_time"}:
+        return prop.get(notion_type)
     if notion_type == "multi_select":
         values = prop.get("multi_select") or []
         return json.dumps([item.get("name") for item in values if item.get("name")])

@@ -18,12 +18,12 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
   const width = Math.max(data.length * 34 + 40, 360);
   const height = 260;
   const baseline = height - 44;
-  const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, Math.abs(d.completed - d.created), 1)));
+  const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, Math.abs(d.created - d.completed), 1)));
   const scale = (value: number) => (value / maxValue) * (height - 100);
 
   let cumulativeNet = 0;
   const netPoints = data.map((entry, idx) => {
-    cumulativeNet += entry.completed - entry.created;
+    cumulativeNet += entry.created - entry.completed;
     const x = 38 + idx * 34;
     return { x, y: baseline - scale(cumulativeNet), value: cumulativeNet, label: formatDateLabel(entry.date) };
   });
@@ -32,6 +32,7 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
     <div className="chart-shell">
       <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Flow & Net">
         <line x1="32" x2={width - 12} y1={baseline} y2={baseline} className="chart-axis" />
+        <line x1="32" x2="32" y1={baseline} y2={26} className="chart-axis" />
         {data.map((entry, idx) => {
           const x = 32 + idx * 34;
           const completedHeight = scale(entry.completed);
@@ -77,6 +78,12 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
             <title>{`${point.label}: Net ${formatNumber(point.value)}`}</title>
           </g>
         ))}
+        <text x={width / 2} y={height - 10} className="chart-axis-title" textAnchor="middle">
+          Datum
+        </text>
+        <text x={-height / 2} y={16} transform="rotate(-90)" className="chart-axis-title" textAnchor="middle">
+          Anzahl Tasks
+        </text>
       </svg>
       <div className="chart-axis-labels">
         <span>0</span>
@@ -284,6 +291,9 @@ function WorkspacePie({
       );
     }, [filteredDailyFlow]);
 
+    const netFlowValue = periodTotals.created - periodTotals.completed;
+    const netFlowClass = netFlowValue <= 0 ? "text-green" : "text-red";
+
     const pieData = useMemo(() => {
       const data = stats?.open_by_workspace || [];
       if (!data.length) return data;
@@ -357,8 +367,13 @@ function WorkspacePie({
             <div className="metric-sub">Gesamt: {formatNumber(stats.summary.completed)}</div>
           </div>
           <div className="metric-card">
+            <div className="metric-label">Erstellt ({rangeDays}d)</div>
+            <div className="metric-value text-red">{formatNumber(periodTotals.created)}</div>
+            <div className="metric-sub">Gesamt: {formatNumber(stats.summary.created)}</div>
+          </div>
+          <div className="metric-card">
             <div className="metric-label">Aktueller Net-Flow</div>
-            <div className="metric-value">{formatNumber(periodTotals.created - periodTotals.completed)}</div>
+            <div className={`metric-value ${netFlowClass}`.trim()}>{formatNumber(netFlowValue)}</div>
             <div className="metric-sub">Letzte {rangeDays} Tage</div>
           </div>
         </div>

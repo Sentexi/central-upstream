@@ -5,7 +5,11 @@ import type { HeatmapPoint, TaskDashboardStats, WorkspaceOpen } from "./types";
 
 const palette = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#34d399", "#fb7185"];
 
-function formatNumber(value: number) {
+function formatNumber(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "–";
+  }
+
   return value.toLocaleString("de-DE");
 }
 

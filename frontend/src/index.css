@@ -803,6 +803,12 @@ body {
   stroke-width: 1.2px;
 }
 
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1px;
+  opacity: 0.35;
+}
+
 .chart-axis-title {
   fill: var(--text-muted);
   font-size: 12px;
@@ -814,6 +820,12 @@ body {
   color: var(--text-muted);
   font-size: 12px;
   margin-top: 4px;
+}
+
+.chart-tick-label,
+.chart-date-label {
+  fill: var(--text-muted);
+  font-size: 11px;
 }
 
 .bar {

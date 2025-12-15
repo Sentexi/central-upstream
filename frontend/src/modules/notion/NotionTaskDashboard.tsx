@@ -19,34 +19,64 @@ function formatDateLabel(date: string) {
 }
 
 function CombinedFlowChart({ data }: { data: { date: string; created: number; completed: number }[] }) {
-  const width = Math.max(data.length * 34 + 40, 360);
-  const height = 260;
-  const baseline = height - 44;
-  const maxValue = Math.max(...data.map((d) => Math.max(d.created, d.completed, Math.abs(d.created - d.completed), 1)));
-  const scale = (value: number) => (value / maxValue) * (height - 100);
+  const width = Math.max(data.length * 44 + 96, 420);
+  const height = 300;
+  const margin = { top: 28, right: 18, bottom: 78, left: 60 };
+  const innerHeight = height - margin.top - margin.bottom;
 
   let cumulativeNet = 0;
+  let netMin = 0;
+  let netMax = 0;
   const netPoints = data.map((entry, idx) => {
     cumulativeNet += entry.created - entry.completed;
-    const x = 38 + idx * 34;
-    return { x, y: baseline - scale(cumulativeNet), value: cumulativeNet, label: formatDateLabel(entry.date) };
+    netMin = Math.min(netMin, cumulativeNet);
+    netMax = Math.max(netMax, cumulativeNet);
+    const x = margin.left + idx * 44 + 16;
+    return { x, y: cumulativeNet, value: cumulativeNet, label: formatDateLabel(entry.date) };
   });
+
+  const maxCompleted = Math.max(...data.map((d) => d.completed), 0);
+  const maxCreated = Math.max(...data.map((d) => d.created), 0);
+  const maxAboveZero = Math.max(maxCompleted, netMax, 0);
+  const maxBelowZero = Math.max(maxCreated, Math.abs(Math.min(netMin, 0)), 0);
+  const rangeSpan = maxAboveZero + maxBelowZero || 1;
+  const zeroY = margin.top + (maxAboveZero / rangeSpan) * innerHeight;
+
+  const valueToY = (value: number) => zeroY - (value / rangeSpan) * innerHeight;
+
+  const yTicks = [maxAboveZero || null, 0, maxBelowZero ? -maxBelowZero : null].filter(
+    (tick, idx, arr) => tick !== null && arr.indexOf(tick) === idx,
+  ) as number[];
 
   return (
     <div className="chart-shell">
       <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Flow & Net">
-        <line x1="32" x2={width - 12} y1={baseline} y2={baseline} className="chart-axis" />
-        <line x1="32" x2="32" y1={baseline} y2={26} className="chart-axis" />
-        {data.map((entry, idx) => {
-          const x = 32 + idx * 34;
-          const completedHeight = scale(entry.completed);
-          const createdHeight = scale(entry.created);
+        <line x1={margin.left} x2={width - margin.right} y1={zeroY} y2={zeroY} className="chart-axis" />
+        <line x1={margin.left} x2={margin.left} y1={height - margin.bottom} y2={margin.top} className="chart-axis" />
+
+        {yTicks.map((tick) => {
+          const y = valueToY(tick);
           return (
-            <g key={entry.date} transform={`translate(${x}, 0)`}>
+            <g key={tick}>
+              <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
+              <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
+                {formatNumber(tick)}
+              </text>
+            </g>
+          );
+        })}
+
+        {data.map((entry, idx) => {
+          const groupX = margin.left + idx * 44;
+          const completedY = valueToY(entry.completed);
+          const completedHeight = zeroY - completedY;
+          const createdHeight = valueToY(-entry.created) - zeroY;
+          return (
+            <g key={entry.date}>
               <rect
-                x={4}
-                y={baseline - completedHeight}
-                width={12}
+                x={groupX + 4}
+                y={completedY}
+                width={14}
                 height={completedHeight}
                 rx={3}
                 className="bar bar--green"
@@ -54,9 +84,9 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
                 <title>{`${formatDateLabel(entry.date)}: Done ${entry.completed}`}</title>
               </rect>
               <rect
-                x={20}
-                y={baseline - createdHeight}
-                width={12}
+                x={groupX + 22}
+                y={zeroY}
+                width={14}
                 height={createdHeight}
                 rx={3}
                 className="bar bar--red"
@@ -72,27 +102,33 @@ function CombinedFlowChart({ data }: { data: { date: string; created: number; co
             fill="none"
             stroke="#fbbf24"
             strokeWidth={2.5}
-            points={netPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+            points={netPoints.map((point) => `${point.x},${valueToY(point.y)}`).join(" ")}
             className="line-connector"
           />
         )}
         {netPoints.map((point) => (
           <g key={point.x}>
-            <circle cx={point.x} cy={point.y} r={4} className="line-dot line-dot--amber" />
+            <circle cx={point.x} cy={valueToY(point.y)} r={4} className="line-dot line-dot--amber" />
             <title>{`${point.label}: Net ${formatNumber(point.value)}`}</title>
           </g>
         ))}
-        <text x={width / 2} y={height - 10} className="chart-axis-title" textAnchor="middle">
+
+        {data.map((entry, idx) => {
+          const labelX = margin.left + idx * 44 + 18;
+          return (
+            <text key={`label-${entry.date}`} x={labelX} y={height - margin.bottom + 22} className="chart-date-label" textAnchor="middle">
+              {formatDateLabel(entry.date)}
+            </text>
+          );
+        })}
+
+        <text x={width / 2} y={height - 14} className="chart-axis-title" textAnchor="middle">
           Datum
         </text>
-        <text x={-height / 2} y={16} transform="rotate(-90)" className="chart-axis-title" textAnchor="middle">
+        <text x={-height / 2} y={18} transform="rotate(-90)" className="chart-axis-title" textAnchor="middle">
           Anzahl Tasks
         </text>
       </svg>
-      <div className="chart-axis-labels">
-        <span>0</span>
-        <span>{formatNumber(maxValue)}</span>
-      </div>
     </div>
   );
 }

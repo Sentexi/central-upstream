@@ -370,6 +370,8 @@ def get_stats():
         for day in all_days
     ]
 
+    created_total = sum(int(row["created"]) for row in created_rows)
+
     weekly_map: Dict[str, Dict[str, object]] = {}
     for row in weekly_incoming_rows:
         weekly_map[row["period"]] = {"period": row["period"], "incoming": row["incoming"], "completed": 0}
@@ -393,6 +395,7 @@ def get_stats():
                 "open_active": open_active_count,
                 "open_outbound": open_outbound_count,
                 "completed": completed_count,
+                "created": created_total,
                 "incoming_last_7d": last7_incoming["cnt"] if last7_incoming else 0,
                 "completed_last_7d": last7_completed,
             },

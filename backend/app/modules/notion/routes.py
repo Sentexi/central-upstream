@@ -400,7 +400,7 @@ def get_stats():
             ).fetchone()
             return row["cnt"] if row else 0
 
-        open_active_count = _count_status_matches(["not started", "in progress"])
+        open_active_count = _count_status_matches(["not started", "in progress", "recall"])
         open_outbound_count = _count_status_matches(
             ["outbound", "outbound irreplacable", "outbound replacable", "callback"]
         )

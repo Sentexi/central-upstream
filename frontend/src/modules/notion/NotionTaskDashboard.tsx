@@ -488,13 +488,17 @@ export function NotionTaskDashboard() {
           }));
         }
 
-        if (currentView === "previous-years") {
-          return groupFlowByMonth(flow);
-        }
+      if (currentView === "previous-years") {
+        return groupFlowByMonth(flow);
+      }
 
-        return groupFlowByWeek(flow);
-      };
-    }, []);
+      if (currentView === "ytd") {
+        return groupFlowByMonth(flow);
+      }
+
+      return groupFlowByWeek(flow);
+    };
+  }, []);
 
     const chartData = useMemo<FlowChartDatum[]>(() => buildChartData(filteredFlow, view), [buildChartData, filteredFlow, view]);
     const minutesFlow = useMemo<FlowEntry[]>(

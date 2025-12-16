@@ -247,7 +247,6 @@ def get_stats():
                 {time_expr} AS created_minutes
             FROM notion_rows
             WHERE created_time IS NOT NULL
-              AND created_time >= date('now', '-120 days')
             GROUP BY DATE(created_time)
             ORDER BY date
             """,
@@ -261,7 +260,6 @@ def get_stats():
                 SELECT DATE({completion_expr}) AS date, COUNT(*) AS completed, {time_expr} AS completed_minutes
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
-                  AND {completion_expr} >= date('now', '-120 days')
                   AND {status_col} IN ({placeholders})
                 GROUP BY DATE({completion_expr})
                 ORDER BY date

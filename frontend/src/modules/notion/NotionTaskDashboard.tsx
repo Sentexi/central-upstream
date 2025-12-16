@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../../core/GlassCard";
 import { fetchTaskDashboardStats } from "./api";
-import type { HeatmapPoint, TaskDashboardStats, WorkspaceOpen } from "./types";
+import type { DailyFlow, HeatmapPoint, TaskDashboardStats, WorkspaceOpen } from "./types";
 
 const palette = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#34d399", "#fb7185"];
 
@@ -43,6 +43,8 @@ type FlowChartDatum = {
   completed: number;
 };
 
+type FlowEntry = DailyFlow;
+
 function formatDateLabel(date: string) {
   const d = new Date(date);
   return d.toLocaleDateString("de-DE", { month: "short", day: "numeric" });
@@ -73,7 +75,7 @@ function formatMonthLabel(date: Date) {
   return date.toLocaleDateString("de-DE", { month: "short", year: "numeric" });
 }
 
-function groupFlowByWeek(flow: { date: string; created: number; completed: number }[]): FlowChartDatum[] {
+function groupFlowByWeek(flow: FlowEntry[]): FlowChartDatum[] {
   const buckets = new Map<
     string,
     { created: number; completed: number; start: Date }
@@ -99,7 +101,7 @@ function groupFlowByWeek(flow: { date: string; created: number; completed: numbe
     .sort((a, b) => new Date(a.id).getTime() - new Date(b.id).getTime());
 }
 
-function groupFlowByMonth(flow: { date: string; created: number; completed: number }[]): FlowChartDatum[] {
+function groupFlowByMonth(flow: FlowEntry[]): FlowChartDatum[] {
   const buckets = new Map<
     string,
     { created: number; completed: number; start: Date }
@@ -431,7 +433,7 @@ export function NotionTaskDashboard() {
       }
     }, [stats]);
 
-    const filteredFlow = useMemo(() => {
+    const filteredFlow = useMemo<DailyFlow[]>(() => {
       if (!stats) return [];
       const today = new Date();
       const daily = stats.daily_flow;
@@ -469,30 +471,44 @@ export function NotionTaskDashboard() {
       );
     }, [filteredFlow]);
 
-    const chartData = useMemo<FlowChartDatum[]>(() => {
-      if (!filteredFlow.length) return [];
+    const buildChartData = useMemo(() => {
+      return (flow: FlowEntry[], currentView: FlowView): FlowChartDatum[] => {
+        if (!flow.length) return [];
 
-      if (view === "7d" || view === "14d") {
-        return filteredFlow.map((entry) => ({
-          id: entry.date,
-          label: formatDateLabel(entry.date),
-          tooltipLabel: new Date(entry.date).toLocaleDateString("de-DE", {
-            weekday: "short",
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          }),
-          created: entry.created,
-          completed: entry.completed,
-        }));
-      }
+        if (currentView === "7d" || currentView === "14d") {
+          return flow.map((entry) => ({
+            id: entry.date,
+            label: formatDateLabel(entry.date),
+            tooltipLabel: new Date(entry.date).toLocaleDateString("de-DE", {
+              weekday: "short",
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            }),
+            created: entry.created,
+            completed: entry.completed,
+          }));
+        }
 
-      if (view === "previous-years") {
-        return groupFlowByMonth(filteredFlow);
-      }
+        if (currentView === "previous-years") {
+          return groupFlowByMonth(flow);
+        }
 
-      return groupFlowByWeek(filteredFlow);
-    }, [filteredFlow, view]);
+        return groupFlowByWeek(flow);
+      };
+    }, []);
+
+    const chartData = useMemo<FlowChartDatum[]>(() => buildChartData(filteredFlow, view), [buildChartData, filteredFlow, view]);
+    const minutesFlow = useMemo<FlowEntry[]>(
+      () =>
+        filteredFlow.map((entry) => ({
+          date: entry.date,
+          created: entry.created_minutes ?? 0,
+          completed: entry.completed_minutes ?? 0,
+        })),
+      [filteredFlow],
+    );
+    const minutesChartData = useMemo<FlowChartDatum[]>(() => buildChartData(minutesFlow, view), [buildChartData, minutesFlow, view]);
 
     const netFlowValue = periodTotals.created - periodTotals.completed;
     const netFlowClass = netFlowValue <= 0 ? "text-green" : "text-red";
@@ -583,20 +599,41 @@ export function NotionTaskDashboard() {
         </div>
       )}
 
-      {chartData.length > 0 && (
-        <div className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <div className="muted small">Inflow vs. Done</div>
-              <h4 className="chart-title">Durchsatz &amp; Net-Flow</h4>
+      {(chartData.length > 0 || minutesChartData.length > 0) && (
+        <div className="chart-row">
+          {chartData.length > 0 && (
+            <div className="chart-panel">
+              <div className="chart-panel__header">
+                <div>
+                  <div className="muted small">Inflow vs. Done</div>
+                  <h4 className="chart-title">Durchsatz &amp; Net-Flow</h4>
+                </div>
+                <div className="legend">
+                  <span className="legend-dot legend-dot--green" /> Done
+                  <span className="legend-dot legend-dot--red" /> Created
+                  <span className="legend-dot legend-dot--amber" /> Net-Flow (kumuliert)
+                </div>
+              </div>
+              <CombinedFlowChart data={chartData} />
             </div>
-            <div className="legend">
-              <span className="legend-dot legend-dot--green" /> Done
-              <span className="legend-dot legend-dot--red" /> Created
-              <span className="legend-dot legend-dot--amber" /> Net-Flow (kumuliert)
+          )}
+
+          {minutesChartData.length > 0 && (
+            <div className="chart-panel">
+              <div className="chart-panel__header">
+                <div>
+                  <div className="muted small">Inflow vs. Done (Minuten)</div>
+                  <h4 className="chart-title">Geschätzter Aufwand &amp; Net-Flow</h4>
+                </div>
+                <div className="legend">
+                  <span className="legend-dot legend-dot--green" /> Done (Minuten)
+                  <span className="legend-dot legend-dot--red" /> Created (Minuten)
+                  <span className="legend-dot legend-dot--amber" /> Net-Flow (Minuten, kumuliert)
+                </div>
+              </div>
+              <CombinedFlowChart data={minutesChartData} />
             </div>
-          </div>
-          <CombinedFlowChart data={chartData} />
+          )}
         </div>
       )}
 

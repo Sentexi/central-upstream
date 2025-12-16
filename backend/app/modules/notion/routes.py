@@ -226,6 +226,10 @@ def get_stats():
     property_map = repo.get_property_map()
     status_col = _resolve_column(property_map, ["status"])
     workspace_col = _resolve_column(property_map, ["workspace", "area", "team"])
+    estimated_time_col = _resolve_column(
+        property_map,
+        ["estimated_time_min", "estimated_minutes", "time_estimate_min", "estimated_time"],
+    )
     completion_col = _resolve_column(
         property_map, ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"]
     )
@@ -236,13 +240,16 @@ def get_stats():
 
         created_rows = conn.execute(
             """
-            SELECT DATE(created_time) AS date, COUNT(*) AS created
+            SELECT
+                DATE(created_time) AS date,
+                COUNT(*) AS created,
+                {time_expr} AS created_minutes
             FROM notion_rows
             WHERE created_time IS NOT NULL
               AND created_time >= date('now', '-120 days')
             GROUP BY DATE(created_time)
             ORDER BY date
-            """
+            """.format(time_expr=f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"),
         ).fetchall()
 
         completed_rows = []
@@ -250,14 +257,14 @@ def get_stats():
             placeholders = ",".join(["?"] * len(done_statuses))
             completed_rows = conn.execute(
                 f"""
-                SELECT DATE({completion_expr}) AS date, COUNT(*) AS completed
+                SELECT DATE({completion_expr}) AS date, COUNT(*) AS completed, {time_expr} AS completed_minutes
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
                   AND {completion_expr} >= date('now', '-120 days')
                   AND {status_col} IN ({placeholders})
                 GROUP BY DATE({completion_expr})
                 ORDER BY date
-                """,
+                """.format(time_expr=f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"),
                 done_statuses,
             ).fetchall()
 
@@ -398,10 +405,18 @@ def get_stats():
         open_outbound_count = _count_status_matches(["outbound"])
 
     daily_created_map = {row["date"]: row["created"] for row in created_rows}
+    daily_created_minutes_map = {row["date"]: row["created_minutes"] for row in created_rows}
     daily_completed_map = {row["date"]: row["completed"] for row in completed_rows}
+    daily_completed_minutes_map = {row["date"]: row["completed_minutes"] for row in completed_rows}
     all_days = sorted(set(daily_created_map.keys()) | set(daily_completed_map.keys()))
     daily_flow = [
-        {"date": day, "created": daily_created_map.get(day, 0), "completed": daily_completed_map.get(day, 0)}
+        {
+            "date": day,
+            "created": daily_created_map.get(day, 0),
+            "completed": daily_completed_map.get(day, 0),
+            "created_minutes": daily_created_minutes_map.get(day, 0),
+            "completed_minutes": daily_completed_minutes_map.get(day, 0),
+        }
         for day in all_days
     ]
 

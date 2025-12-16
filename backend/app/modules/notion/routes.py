@@ -366,7 +366,9 @@ def get_stats():
             return row["cnt"] if row else 0
 
         open_active_count = _count_status_matches(["not started", "in progress"])
-        open_outbound_count = _count_status_matches(["outbound"])
+        open_outbound_count = _count_status_matches(
+            ["outbound", "outbound irreplacable", "outbound replacable", "callback"]
+        )
 
     daily_created_map = {row["date"]: row["created"] for row in created_rows}
     daily_created_minutes_map = {row["date"]: row["created_minutes"] for row in created_rows}

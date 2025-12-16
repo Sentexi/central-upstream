@@ -533,7 +533,7 @@ export function NotionTaskDashboard() {
     const completionHeatmap = stats?.completion_heatmap || [];
     const activeHeatmap = heatmapMode === "created" ? creationHeatmap : completionHeatmap;
     const activeHeatmapLabel = heatmapMode === "created" ? "Created" : "Done";
-    const activeHeatmapColor = heatmapMode === "created" ? "#60a5fa" : "#4ade80";
+    const activeHeatmapColor = heatmapMode === "created" ? "#ef4444" : "#4ade80";
     const hasHeatmapData = creationHeatmap.length > 0 || completionHeatmap.length > 0;
     const periodLabel = flowViewLabels[view];
 

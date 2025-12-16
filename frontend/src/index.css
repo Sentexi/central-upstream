@@ -674,13 +674,14 @@ body {
   background: rgba(255, 255, 255, 0.02);
   display: grid;
   gap: 12px;
+  height: 100%;
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .chart-panel__header {

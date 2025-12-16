@@ -132,8 +132,7 @@ function CombinedFlowChart({ data }: { data: FlowChartDatum[] }) {
   const height = 300;
   const margin = { top: 28, right: 18, bottom: 78, left: 60 };
   const barGroupWidth = 52;
-  const barWidth = 14;
-  const barGap = 8;
+  const barWidth = 18;
   const chartWidth = Math.max(data.length * barGroupWidth + margin.left + margin.right, 560);
   const innerHeight = height - margin.top - margin.bottom;
 
@@ -187,15 +186,14 @@ function CombinedFlowChart({ data }: { data: FlowChartDatum[] }) {
 
         {data.map((entry, idx) => {
           const groupX = margin.left + idx * barGroupWidth;
+          const barX = groupX + (barGroupWidth - barWidth) / 2;
           const completedY = valueToY(entry.completed);
           const completedHeight = zeroY - completedY;
           const createdHeight = valueToY(-entry.created) - zeroY;
-          const firstBarX = groupX + (barGroupWidth - barWidth * 2 - barGap) / 2;
-          const secondBarX = firstBarX + barWidth + barGap;
           return (
             <g key={entry.id}>
               <rect
-                x={firstBarX}
+                x={barX}
                 y={completedY}
                 width={barWidth}
                 height={completedHeight}
@@ -205,7 +203,7 @@ function CombinedFlowChart({ data }: { data: FlowChartDatum[] }) {
                 <title>{`${entry.tooltipLabel}: Done ${entry.completed}`}</title>
               </rect>
               <rect
-                x={secondBarX}
+                x={barX}
                 y={zeroY}
                 width={barWidth}
                 height={createdHeight}

@@ -199,12 +199,13 @@ def get_stats():
         property_map, ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"]
     )
     completion_expr = completion_col or "last_edited_time"
+    time_expr = f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper
         done_statuses = _detect_done_statuses(repo, status_col)
 
         created_rows = conn.execute(
-            """
+            f"""
             SELECT
                 DATE(created_time) AS date,
                 COUNT(*) AS created,
@@ -214,7 +215,7 @@ def get_stats():
               AND created_time >= date('now', '-120 days')
             GROUP BY DATE(created_time)
             ORDER BY date
-            """.format(time_expr=f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"),
+            """,
         ).fetchall()
 
         completed_rows = []
@@ -229,7 +230,7 @@ def get_stats():
                   AND {status_col} IN ({placeholders})
                 GROUP BY DATE({completion_expr})
                 ORDER BY date
-                """.format(time_expr=f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"),
+                """,
                 done_statuses,
             ).fetchall()
 

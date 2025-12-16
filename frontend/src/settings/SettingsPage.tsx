@@ -6,14 +6,6 @@ import type {
   SettingsValueMap,
 } from "../core/types";
 
-type HealthSettings = {
-  ingest_url: string;
-  ingest_path: string;
-  hint: string;
-};
-
-type HealthStatus = string | null;
-
 type StatusState = "idle" | "saving" | "error" | "success";
 
 type StatusMap = Record<string, { state: StatusState; message?: string }>; // keyed by module_id
@@ -45,6 +37,7 @@ function renderField(
   value: unknown,
   onChange: (value: unknown) => void
 ) {
+  const isReadOnly = Boolean(field.read_only);
   const commonProps = {
     id: field.key,
     name: field.key,
@@ -66,6 +59,7 @@ function renderField(
           type="checkbox"
           checked={Boolean(value)}
           onChange={(event) => onChange(event.target.checked)}
+          disabled={isReadOnly}
         />
         <span>{field.label}</span>
       </label>
@@ -74,7 +68,7 @@ function renderField(
 
   if (field.type === "select") {
     return (
-      <select className="input" {...commonProps}>
+      <select className="input" {...commonProps} disabled={isReadOnly}>
         {field.options?.map((opt) => (
           <option value={opt.value} key={opt.value}>
             {opt.label}
@@ -86,7 +80,15 @@ function renderField(
 
   const inputType = field.type === "password" ? "password" : "text";
 
-  return <input className="input" type={inputType} placeholder={field.label} {...commonProps} />;
+  return (
+    <input
+      className="input"
+      type={inputType}
+      placeholder={field.label}
+      readOnly={isReadOnly}
+      {...commonProps}
+    />
+  );
 }
 
 export function SettingsPage() {
@@ -94,9 +96,6 @@ export function SettingsPage() {
   const [values, setValues] = useState<SettingsValueMap>({});
   const [loading, setLoading] = useState(true);
   const [statuses, setStatuses] = useState<StatusMap>({});
-  const [healthSettings, setHealthSettings] = useState<HealthSettings | null>(null);
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>(null);
-  const [loadingHealthSettings, setLoadingHealthSettings] = useState(false);
 
   useEffect(() => {
     async function bootstrap() {
@@ -134,42 +133,33 @@ export function SettingsPage() {
     bootstrap();
   }, []);
 
+  const formatLastSync = (value: string | null) => {
+    if (!value) return "noch kein Sync";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString();
+  };
+
   useEffect(() => {
     const hasHealthModule = modules.some((module) => module.module_id === "health");
     if (!hasHealthModule) {
-      setHealthSettings(null);
-      setHealthStatus(null);
       return;
-    }
-
-    async function loadHealthSettings() {
-      try {
-        setLoadingHealthSettings(true);
-        const response = await fetch("/api/health/settings");
-        const data = await response.json();
-        setHealthSettings({
-          ingest_path: data.ingest_path,
-          ingest_url: data.ingest_url,
-          hint: data.hint,
-        });
-      } catch (err) {
-        console.error("Health Settings konnten nicht geladen werden", err);
-      } finally {
-        setLoadingHealthSettings(false);
-      }
     }
 
     async function loadHealthStatus() {
       try {
         const response = await fetch("/api/health/status");
         const data = await response.json();
-        setHealthStatus((data && data.last_imported_at) || null);
+        const formatted = formatLastSync((data && data.last_imported_at) || null);
+        setStatuses((prev) => ({
+          ...prev,
+          health: { state: "success", message: `Last sync: ${formatted}` },
+        }));
       } catch (err) {
         console.error("Health Status konnte nicht geladen werden", err);
       }
     }
 
-    loadHealthSettings();
     loadHealthStatus();
   }, [modules]);
 
@@ -185,13 +175,6 @@ export function SettingsPage() {
 
   const setStatus = (moduleId: string, status: StatusState, message?: string) => {
     setStatuses((prev) => ({ ...prev, [moduleId]: { state: status, message } }));
-  };
-
-  const formatLastSync = (value: HealthStatus) => {
-    if (!value) return "noch kein Sync";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleString();
   };
 
   const validateLocally = (module: SettingsModuleSchema) => {
@@ -281,48 +264,6 @@ export function SettingsPage() {
 
       <div className="settings-grid">
         {modules.map((module) => {
-          if (module.module_id === "health") {
-            return (
-              <GlassCard key={module.module_id} className="settings-card">
-                <div className="settings-card__header">
-                  <div>
-                    <span className="kicker">{module.module_id}</span>
-                    <h3 className="card-title">{module.module_name}</h3>
-                  </div>
-                  <span className="status-pill status-success">
-                    last sync: {formatLastSync(healthStatus)}
-                  </span>
-                </div>
-
-                <div className="stack settings-fields">
-                  <label className="settings-field">
-                    <div className="settings-field__meta">
-                      <span className="settings-label">Endpoint URL</span>
-                      <span className="muted">
-                        Nur lesend – kopiere die URL in Auto Export.
-                      </span>
-                    </div>
-                    <input
-                      className="input"
-                      type="text"
-                      readOnly
-                      value={healthSettings?.ingest_url ?? ""}
-                      placeholder={
-                        loadingHealthSettings
-                          ? "Lade Health Endpoint..."
-                          : "https://.../api/health/ingest"
-                      }
-                    />
-                  </label>
-                  <p className="card-description">
-                    {healthSettings?.hint ??
-                      "Auto Export sendet den JSON-Export per POST an diese URL."}
-                  </p>
-                </div>
-              </GlassCard>
-            );
-          }
-
           const moduleValues = values[module.module_id] ?? {};
           const status = statuses[module.module_id] ?? { state: "idle" };
 

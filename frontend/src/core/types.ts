@@ -27,6 +27,7 @@ export interface SettingsField {
   help_text?: string | null;
   default?: unknown;
   options?: { label: string; value: string }[];
+  read_only?: boolean;
 }
 
 export interface SettingsModuleSchema {

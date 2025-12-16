@@ -676,6 +676,13 @@ body {
   gap: 12px;
 }
 
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
 .chart-panel__header {
   display: flex;
   align-items: center;

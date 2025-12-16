@@ -37,6 +37,8 @@ export type DailyFlow = {
   date: string;
   created: number;
   completed: number;
+  created_minutes?: number;
+  completed_minutes?: number;
 };
 
 export type WeeklyFlow = {

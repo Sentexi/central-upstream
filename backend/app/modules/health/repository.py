@@ -172,6 +172,42 @@ class HealthRepository:
                     (time.perf_counter() - payload_start) * 1000,
                 )
 
+                table_columns = column_cache.get(table_name, set())
+                qty_column = self._sanitize_column_name("qty")
+                duplicate_pairs: set[tuple[int, str]] = set()
+
+                if qty_column in table_columns:
+                    start_ts_candidates = []
+                    for record in table_records:
+                        qty_value = None
+                        for key, value in record.payload.items():
+                            if self._sanitize_column_name(str(key)) == qty_column:
+                                qty_value = self._normalize_value(value)
+                                break
+
+                        if qty_value is None:
+                            continue
+
+                        start_ts_candidates.append(record.start_ts)
+
+                    if start_ts_candidates:
+                        duplicate_lookup_start = time.perf_counter()
+                        unique_start_ts = sorted(set(start_ts_candidates))
+                        placeholders = ", ".join("?" for _ in unique_start_ts)
+                        existing_rows = conn.execute(
+                            f'SELECT start_ts, "{qty_column}" FROM {table_name} '
+                            f"WHERE start_ts IN ({placeholders})",
+                            tuple(unique_start_ts),
+                        ).fetchall()
+
+                        duplicate_pairs = {
+                            (row["start_ts"], str(row[qty_column])) for row in existing_rows
+                        }
+                        _add_duration(
+                            "fetch_duplicates",
+                            (time.perf_counter() - duplicate_lookup_start) * 1000,
+                        )
+
                 min_start = min(record.start_ts for record in table_records)
                 max_end = max(record.end_ts for record in table_records)
                 overlap_start = time.perf_counter()
@@ -185,6 +221,30 @@ class HealthRepository:
                 pending_inserts: List[NormalizedRecord] = []
 
                 for record in table_records:
+                    qty_value_for_record = None
+                    if qty_column in table_columns:
+                        for key, value in record.payload.items():
+                            if self._sanitize_column_name(str(key)) == qty_column:
+                                qty_value_for_record = self._normalize_value(value)
+                                break
+
+                    if (
+                        qty_value_for_record is not None
+                        and (record.start_ts, str(qty_value_for_record)) in duplicate_pairs
+                    ):
+                        skipped += 1
+                        bucket = stats.setdefault(record.data_type, {"inserted": 0, "skipped": 0})
+                        bucket["skipped"] += 1
+                        processed += 1
+                        if progress_callback:
+                            callback_start = time.perf_counter()
+                            progress_callback(processed)
+                            _add_duration(
+                                "progress_callback",
+                                (time.perf_counter() - callback_start) * 1000,
+                            )
+                        continue
+
                     overlapping_for_record = [
                         row
                         for row in overlapping_rows

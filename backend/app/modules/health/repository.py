@@ -5,7 +5,7 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 
 @dataclass
@@ -62,16 +62,25 @@ class HealthRepository:
             """
         )
 
-    def ingest_records(self, records: List[NormalizedRecord], batch_ts: int):
+    def ingest_records(
+        self,
+        records: List[NormalizedRecord],
+        batch_ts: int,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ):
         stats: Dict[str, Dict[str, int]] = {}
         inserted = 0
         skipped = 0
+        processed = 0
 
         with self._connect() as conn:
             for record in records:
                 table_name = self._table_name_for_type(record.data_type)
                 self._ensure_table(conn, table_name)
                 was_inserted = self._upsert_record(conn, table_name, record, batch_ts)
+                processed += 1
+                if progress_callback:
+                    progress_callback(processed)
 
                 bucket = stats.setdefault(record.data_type, {"inserted": 0, "skipped": 0})
                 if was_inserted:

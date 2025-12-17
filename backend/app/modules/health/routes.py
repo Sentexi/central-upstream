@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Any, Dict, Iterable, List, Optional
@@ -16,6 +18,7 @@ bp = Blueprint("health", __name__)
 
 LOCK_FILENAME = "health.lock"
 SYNC_STATUS_FILENAME = "sync_status.json"
+LOG_FILENAME = "health.log"
 
 
 def _get_db_path() -> str:
@@ -38,6 +41,25 @@ def _get_sync_status_path() -> str:
     directory = os.path.dirname(db_path) or current_app.root_path
     os.makedirs(directory, exist_ok=True)
     return os.path.join(directory, SYNC_STATUS_FILENAME)
+
+
+def _get_log_path() -> str:
+    db_path = _get_db_path()
+    directory = os.path.dirname(db_path) or current_app.root_path
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, LOG_FILENAME)
+
+
+def _get_health_logger() -> logging.Logger:
+    logger = logging.getLogger("health_ingest")
+    if not logger.handlers:
+        handler = logging.FileHandler(_get_log_path())
+        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+    return logger
 
 
 def _set_sync_lock(lock_path: str):
@@ -127,58 +149,76 @@ def get_sync_status():
 
 @bp.post("/ingest")
 def ingest():
-    payload = request.get_json(silent=True) or {}
+    logger = _get_health_logger()
+    timings: List[tuple[str, float]] = []
 
-    if _has_current_payload():
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "Es wird bereits ein Payload verarbeitet. Bitte später erneut versuchen.",
-                }
-            ),
-            409,
-        )
+    def _record_step(step: str, duration_ms: float):
+        timings.append((step, duration_ms))
+        logger.info("%s took %.2f ms", step, duration_ms)
 
-    current_payload_path = _persist_current_payload(payload)
-    normalized = list(_normalize_payload(payload))
+    def _elapsed_ms(start: float) -> float:
+        return (time.perf_counter() - start) * 1000
 
-    _write_sync_status(
-        stage="normalizing",
-        total_records=len(normalized),
-        processed_records=0,
-        batch_timestamp=None,
-    )
+    overall_start = time.perf_counter()
+    stage_status = "error"
+    current_payload_path = ""
+    payload: Dict[str, Any] = {}
 
-    if not normalized:
+    try:
+        payload_start = time.perf_counter()
+        payload = request.get_json(silent=True) or {}
+        _record_step("parse_payload", _elapsed_ms(payload_start))
+
+        check_start = time.perf_counter()
+        has_current = _has_current_payload()
+        _record_step("check_current_payload", _elapsed_ms(check_start))
+        if has_current:
+            stage_status = "conflict"
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "error": "Es wird bereits ein Payload verarbeitet. Bitte später erneut versuchen.",
+                    }
+                ),
+                409,
+            )
+
+        persist_start = time.perf_counter()
+        current_payload_path = _persist_current_payload(payload)
+        _record_step("persist_current_payload", _elapsed_ms(persist_start))
+
+        normalize_start = time.perf_counter()
+        normalized = list(_normalize_payload(payload))
+        _record_step("normalize_payload", _elapsed_ms(normalize_start))
+
         _write_sync_status(
-            stage="error",
-            total_records=0,
+            stage="normalizing",
+            total_records=len(normalized),
             processed_records=0,
             batch_timestamp=None,
         )
-        _persist_failed_payload(payload)
-        _archive_payload(current_payload_path)
-        return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
 
-    batch_ts = int(datetime.now(timezone.utc).timestamp())
-    repo = _get_repository()
-    lock_path = _get_lock_path()
-    _set_sync_lock(lock_path)
+        if not normalized:
+            _write_sync_status(
+                stage="error",
+                total_records=0,
+                processed_records=0,
+                batch_timestamp=None,
+            )
+            _persist_failed_payload(payload)
+            _archive_payload(current_payload_path)
+            return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
 
-    processed_records = 0
-    _write_sync_status(
-        stage="ingesting",
-        total_records=len(normalized),
-        processed_records=processed_records,
-        batch_timestamp=batch_ts,
-    )
+        batch_ts = int(datetime.now(timezone.utc).timestamp())
+        repo = _get_repository()
+        lock_path = _get_lock_path()
 
-    stage_status = "error"
+        lock_start = time.perf_counter()
+        _set_sync_lock(lock_path)
+        _record_step("acquire_lock", _elapsed_ms(lock_start))
 
-    def _progress_callback(processed_count: int):
-        nonlocal processed_records
-        processed_records = processed_count
+        processed_records = 0
         _write_sync_status(
             stage="ingesting",
             total_records=len(normalized),
@@ -186,31 +226,65 @@ def ingest():
             batch_timestamp=batch_ts,
         )
 
-    try:
-        stats = repo.ingest_records(normalized, batch_ts, _progress_callback)
-        stage_status = "done"
-    finally:
-        _write_sync_status(
-            stage=stage_status,
-            total_records=len(normalized),
-            processed_records=processed_records,
-            batch_timestamp=batch_ts,
-        )
-        _clear_sync_lock(lock_path)
-        _archive_payload(current_payload_path)
+        def _progress_callback(processed_count: int):
+            nonlocal processed_records
+            processed_records = processed_count
+            _write_sync_status(
+                stage="ingesting",
+                total_records=len(normalized),
+                processed_records=processed_records,
+                batch_timestamp=batch_ts,
+            )
 
-    return (
-        jsonify(
-            {
-                "ok": True,
-                "inserted": stats["inserted"],
-                "skipped": stats["skipped"],
-                "by_type": stats["by_type"],
-                "batch_timestamp": datetime.fromtimestamp(batch_ts, tz=timezone.utc).isoformat(),
-            }
-        ),
-        201,
-    )
+        ingest_start = time.perf_counter()
+
+        def _repo_step(name: str, duration: float):
+            _record_step(f"repository.{name}", duration)
+
+        try:
+            stats = repo.ingest_records(
+                normalized, batch_ts, _progress_callback, timing_logger=_repo_step
+            )
+            stage_status = "done"
+        finally:
+            _record_step("repository.ingest_records", _elapsed_ms(ingest_start))
+            _write_sync_status(
+                stage=stage_status,
+                total_records=len(normalized),
+                processed_records=processed_records,
+                batch_timestamp=batch_ts,
+            )
+            release_start = time.perf_counter()
+            _clear_sync_lock(lock_path)
+            _record_step("release_lock", _elapsed_ms(release_start))
+            archive_start = time.perf_counter()
+            _archive_payload(current_payload_path)
+            _record_step("archive_payload", _elapsed_ms(archive_start))
+
+        return (
+            jsonify(
+                {
+                    "ok": True,
+                    "inserted": stats["inserted"],
+                    "skipped": stats["skipped"],
+                    "by_type": stats["by_type"],
+                    "batch_timestamp": datetime.fromtimestamp(batch_ts, tz=timezone.utc).isoformat(),
+                }
+            ),
+            201,
+        )
+    finally:
+        total_ms = _elapsed_ms(overall_start)
+        slowest = max(timings, key=lambda item: item[1], default=("none", 0.0))
+        slowest_pct = (slowest[1] / total_ms * 100) if total_ms else 0
+        logger.info(
+            "Ingestion status=%s total=%.2f ms slowest=%s (%.2f ms, %.1f%%)",
+            stage_status,
+            total_ms,
+            slowest[0],
+            slowest[1],
+            slowest_pct,
+        )
 
 
 def _persist_failed_payload(payload: Any):

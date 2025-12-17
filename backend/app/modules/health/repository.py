@@ -4,6 +4,8 @@ import json
 import os
 import re
 import sqlite3
+import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
@@ -127,6 +129,7 @@ class HealthRepository:
         records: List[NormalizedRecord],
         batch_ts: int,
         progress_callback: Optional[Callable[[int], None]] = None,
+        timing_logger: Optional[Callable[[str, float], None]] = None,
     ):
         stats: Dict[str, Dict[str, int]] = {}
         inserted = 0
@@ -136,19 +139,31 @@ class HealthRepository:
         table_cache: Dict[str, bool] = {}
         column_cache: Dict[str, set[str]] = {}
 
+        durations: Dict[str, float] = defaultdict(float)
+
+        def _add_duration(step: str, duration_ms: float):
+            durations[step] += duration_ms
+
         with self._connect() as conn:
+            connect_start = time.perf_counter()
             for record in records:
                 table_name = self._table_name_for_type(record.data_type)
                 if table_name not in table_cache:
+                    ensure_start = time.perf_counter()
                     self._ensure_table(conn, table_name)
+                    _add_duration("ensure_table", (time.perf_counter() - ensure_start) * 1000)
                     table_cache[table_name] = True
 
+                upsert_start = time.perf_counter()
                 was_inserted = self._upsert_record(
                     conn, table_name, record, batch_ts, column_cache
                 )
+                _add_duration("upsert_record", (time.perf_counter() - upsert_start) * 1000)
                 processed += 1
                 if progress_callback:
+                    callback_start = time.perf_counter()
                     progress_callback(processed)
+                    _add_duration("progress_callback", (time.perf_counter() - callback_start) * 1000)
 
                 bucket = stats.setdefault(record.data_type, {"inserted": 0, "skipped": 0})
                 if was_inserted:
@@ -158,8 +173,18 @@ class HealthRepository:
                     skipped += 1
                     bucket["skipped"] += 1
 
+            metadata_start = time.perf_counter()
             self._set_last_import(conn, batch_ts)
+            _add_duration("set_last_import", (time.perf_counter() - metadata_start) * 1000)
+            commit_start = time.perf_counter()
             conn.commit()
+            _add_duration("commit", (time.perf_counter() - commit_start) * 1000)
+
+        total_duration_ms = (time.perf_counter() - connect_start) * 1000
+        _add_duration("total_repository", total_duration_ms)
+        if timing_logger:
+            for step, duration in durations.items():
+                timing_logger(step, duration)
 
         return {"inserted": inserted, "skipped": skipped, "by_type": stats}
 

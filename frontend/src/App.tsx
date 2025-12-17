@@ -4,7 +4,7 @@ import type { ModuleManifest } from "./core/types";
 import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 import { SettingsPage } from "./settings/SettingsPage";
 
-type View = "today" | "work" | "dashboard" | "settings";
+type View = "today" | "work" | "dashboard" | "fitness" | "settings";
 
 function App() {
   const [manifests, setManifests] = useState<ModuleManifest[] | null>(null);
@@ -25,6 +25,7 @@ function App() {
   const todayWidgets = getWidgetsForSlot(activeModules, "today_view");
   const workWidgets = getWidgetsForSlot(activeModules, "work_dashboard");
   const dashboardWidgets = getWidgetsForSlot(activeModules, "dashboard_view");
+  const healthWidgets = getWidgetsForSlot(activeModules, "health_view");
 
   return (
     <div className="app-shell">
@@ -77,6 +78,17 @@ function App() {
                 📊
               </span>
               <span className="nav-label">Dashboard</span>
+            </button>
+            <button
+              className={`nav-item ${view === "fitness" ? "active" : ""}`.trim()}
+              type="button"
+              onClick={() => setView("fitness")}
+              aria-label="Fitness"
+            >
+              <span className="nav-icon" aria-hidden>
+                🏋️
+              </span>
+              <span className="nav-label">Fitness</span>
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
@@ -220,6 +232,40 @@ function App() {
                   )}
                   {dashboardWidgets.map((mod, i) =>
                     mod.DashboardWidget ? <mod.DashboardWidget key={i} /> : null
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : view === "fitness" ? (
+            <div className="app-grid">
+              <header className="app-header">
+                <span className="kicker">Fitness</span>
+                <h1 className="title">Health Insights</h1>
+                <p className="subtitle">Tracke deine Aktivitätsdaten, Trends und Ziele.</p>
+              </header>
+              <section className="stack">
+                <div className="section-heading">Fitness Dashboard</div>
+                <div className="grid-cards">
+                  {manifests === null && (
+                    <GlassCard glow className="loader">
+                      <span className="kicker">Booting</span>
+                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <p className="card-description">
+                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {manifests && healthWidgets.length === 0 && (
+                    <GlassCard>
+                      <div className="kicker">Kein Fitness-Modul aktiv</div>
+                      <h3 className="card-title">Aktiviere das Health Modul</h3>
+                      <p className="card-description">
+                        Verbinde dein Health-Modul, um deine Bewegungsdaten hier zu sehen.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {healthWidgets.map((mod, i) =>
+                    mod.HealthWidget ? <mod.HealthWidget key={i} /> : null
                   )}
                 </div>
               </section>

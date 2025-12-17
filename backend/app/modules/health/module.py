@@ -17,7 +17,7 @@ class HealthModule(BaseModule):
 
     def get_manifest(self) -> dict:
         manifest = super().get_manifest()
-        manifest["slots"] = ["dashboard_view"]
+        manifest["slots"] = ["dashboard_view", "health_view"]
         return manifest
 
 

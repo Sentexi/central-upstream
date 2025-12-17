@@ -5,7 +5,9 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from datetime import date, datetime, timedelta, timezone
+from statistics import median
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -25,6 +27,7 @@ class HealthRepository:
         if directory:
             os.makedirs(directory, exist_ok=True)
         self._ensure_metadata_table()
+        self._summary_cache: Dict[Tuple[str, str], List[dict]] = {}
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -75,6 +78,13 @@ class HealthRepository:
     def _existing_columns(self, conn: sqlite3.Connection, table_name: str) -> List[str]:
         cursor = conn.execute(f"PRAGMA table_info({table_name})")
         return [row[1] for row in cursor.fetchall()]
+
+    def _table_exists(self, conn: sqlite3.Connection, table_name: str) -> bool:
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        )
+        return cursor.fetchone() is not None
 
     def _ensure_payload_columns(
         self, conn: sqlite3.Connection, table_name: str, payload: Dict
@@ -202,8 +212,250 @@ class HealthRepository:
         ts = int(row["value"])
         return _timestamp_to_iso(ts)
 
+    def _extract_row_date(self, row: sqlite3.Row) -> Optional[date]:
+        if "date" in row.keys():
+            raw_date = row["date"]
+            if raw_date:
+                try:
+                    dt = datetime.fromisoformat(str(raw_date))
+                    return dt.date()
+                except ValueError:
+                    try:
+                        return datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
+                    except Exception:
+                        pass
+        if "start_ts" in row.keys() and row["start_ts"]:
+            return datetime.fromtimestamp(int(row["start_ts"]), tz=timezone.utc).date()
+        return None
+
+    def _query_rows_in_range(
+        self, conn: sqlite3.Connection, table: str, start_ts: int, end_ts: int
+    ) -> List[sqlite3.Row]:
+        if not self._table_exists(conn, table):
+            return []
+        try:
+            cursor = conn.execute(
+                f"SELECT * FROM {table} WHERE start_ts >= ? AND start_ts < ?",
+                (start_ts, end_ts),
+            )
+            return cursor.fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    def _gather_numeric(self, row: sqlite3.Row, column: str) -> Optional[float]:
+        if column not in row.keys():
+            return None
+        return _parse_float(row[column])
+
+    def get_daily_summary(self, start: date, end: date) -> List[dict]:
+        if start > end:
+            start, end = end, start
+
+        cache_key = (start.isoformat(), end.isoformat())
+        if cache_key in self._summary_cache:
+            return self._summary_cache[cache_key]
+
+        buckets: Dict[str, _DailyBucket] = {
+            day.isoformat(): _DailyBucket(day) for day in _date_range(start, end)
+        }
+
+        start_ts = int(
+            datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc).timestamp()
+        )
+        end_ts = int(
+            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).timestamp()
+        )
+
+        with self._connect() as conn:
+            sleep_rows = self._query_rows_in_range(
+                conn, "health_sleep_analysis", start_ts, end_ts
+            )
+            for row in sleep_rows:
+                day = self._extract_row_date(row)
+                if not day:
+                    continue
+                key = day.isoformat()
+                if key not in buckets:
+                    continue
+                buckets[key].add_sleep(
+                    _parse_float(row.get("totalsleep")),
+                    _parse_float(row.get("deep")),
+                    _parse_float(row.get("core")),
+                    _parse_float(row.get("rem")),
+                )
+
+            hrv_rows = self._query_rows_in_range(
+                conn, "health_heart_rate_variability", start_ts, end_ts
+            )
+            for row in hrv_rows:
+                day = self._extract_row_date(row)
+                if not day:
+                    continue
+                key = day.isoformat()
+                if key not in buckets:
+                    continue
+                buckets[key].add_hrv(self._gather_numeric(row, "qty"))
+
+            rhr_rows = self._query_rows_in_range(
+                conn, "health_resting_heart_rate", start_ts, end_ts
+            )
+            for row in rhr_rows:
+                day = self._extract_row_date(row)
+                if not day:
+                    continue
+                key = day.isoformat()
+                if key not in buckets:
+                    continue
+                buckets[key].add_rhr(self._gather_numeric(row, "qty"))
+
+            resp_rows = self._query_rows_in_range(
+                conn, "health_respiratory_rate", start_ts, end_ts
+            )
+            for row in resp_rows:
+                day = self._extract_row_date(row)
+                if not day:
+                    continue
+                key = day.isoformat()
+                if key not in buckets:
+                    continue
+                buckets[key].add_resp(self._gather_numeric(row, "qty"))
+
+            for table, attr in [
+                ("health_active_energy", "active_kcal"),
+                ("health_basal_energy_burned", "basal_kcal"),
+                ("health_step_count", "steps"),
+                ("health_apple_exercise_time", "exercise_min"),
+                ("health_apple_stand_hour", "stand_hours"),
+                ("health_apple_stand_time", "stand_hours"),
+            ]:
+                rows = self._query_rows_in_range(conn, table, start_ts, end_ts)
+                for row in rows:
+                    day = self._extract_row_date(row)
+                    if not day:
+                        continue
+                    key = day.isoformat()
+                    if key not in buckets:
+                        continue
+                    buckets[key].add_sum(attr, self._gather_numeric(row, "qty"))
+
+        summary = [bucket.as_dict() for _, bucket in sorted(buckets.items())]
+        self._summary_cache[cache_key] = summary
+        return summary
+
 
 def _timestamp_to_iso(ts: int) -> str:
     from datetime import datetime, timezone
 
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def _parse_float(value) -> Optional[float]:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        sanitized = stripped.replace(",", ".")
+        try:
+            return float(sanitized)
+        except ValueError:
+            return None
+
+    return None
+
+
+def _median(values: List[float]) -> Optional[float]:
+    if not values:
+        return None
+    return float(median(values))
+
+
+class _DailyBucket:
+    def __init__(self, day: date):
+        self.day = day
+        self.sleep_total = 0.0
+        self.sleep_deep = 0.0
+        self.sleep_core = 0.0
+        self.sleep_rem = 0.0
+        self._sleep_seen = False
+
+        self.active_kcal = 0.0
+        self.basal_kcal = 0.0
+        self.steps = 0.0
+        self.exercise_min = 0.0
+        self.stand_hours = 0.0
+        self._stand_seen = False
+
+        self.hrv_values: List[float] = []
+        self.rhr_values: List[float] = []
+        self.resp_values: List[float] = []
+
+    def add_sleep(self, total: Optional[float], deep: Optional[float], core: Optional[float], rem: Optional[float]):
+        if total is not None:
+            self.sleep_total += total
+            self._sleep_seen = True
+        if deep is not None:
+            self.sleep_deep += deep
+            self._sleep_seen = True
+        if core is not None:
+            self.sleep_core += core
+            self._sleep_seen = True
+        if rem is not None:
+            self.sleep_rem += rem
+            self._sleep_seen = True
+
+    def add_hrv(self, value: Optional[float]):
+        if value is not None:
+            self.hrv_values.append(value)
+
+    def add_rhr(self, value: Optional[float]):
+        if value is not None:
+            self.rhr_values.append(value)
+
+    def add_resp(self, value: Optional[float]):
+        if value is not None:
+            self.resp_values.append(value)
+
+    def add_sum(self, attr: str, value: Optional[float]):
+        if value is None:
+            return
+        if attr == "active_kcal":
+            self.active_kcal += value
+        elif attr == "basal_kcal":
+            self.basal_kcal += value
+        elif attr == "steps":
+            self.steps += value
+        elif attr == "exercise_min":
+            self.exercise_min += value
+        elif attr == "stand_hours":
+            self.stand_hours += value
+            self._stand_seen = True
+
+    def as_dict(self) -> dict:
+        return {
+            "date": self.day.isoformat(),
+            "sleep_total": self.sleep_total if self._sleep_seen else None,
+            "sleep_deep": self.sleep_deep if self._sleep_seen else None,
+            "sleep_core": self.sleep_core if self._sleep_seen else None,
+            "sleep_rem": self.sleep_rem if self._sleep_seen else None,
+            "hrv": _median(self.hrv_values),
+            "rhr": _median(self.rhr_values),
+            "resp": _median(self.resp_values),
+            "active_kcal": self.active_kcal if self.active_kcal else None,
+            "basal_kcal": self.basal_kcal if self.basal_kcal else None,
+            "steps": self.steps if self.steps else None,
+            "exercise_min": self.exercise_min if self.exercise_min else None,
+            "stand_hours": self.stand_hours if self._stand_seen else None,
+        }
+
+
+def _date_range(start: date, end: date):
+    current = start
+    while current <= end:
+        yield current
+        current += timedelta(days=1)

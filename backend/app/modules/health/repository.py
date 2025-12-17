@@ -247,6 +247,24 @@ class HealthRepository:
             return None
         return _parse_float(row[column])
 
+    def _extract_row_hour(self, row: sqlite3.Row) -> Optional[datetime]:
+        """Extract a UTC hour bucket from a row if possible."""
+
+        if "start_ts" in row.keys() and row["start_ts"]:
+            dt = datetime.fromtimestamp(int(row["start_ts"]), tz=timezone.utc)
+            return dt.replace(minute=0, second=0, microsecond=0)
+
+        if "date" in row.keys():
+            raw_date = row["date"]
+            if raw_date:
+                try:
+                    dt = datetime.fromisoformat(str(raw_date))
+                    return dt.replace(minute=0, second=0, microsecond=0)
+                except ValueError:
+                    pass
+
+        return None
+
     def get_daily_summary(self, start: date, end: date) -> List[dict]:
         if start > end:
             start, end = end, start
@@ -341,6 +359,92 @@ class HealthRepository:
         summary = [bucket.as_dict() for _, bucket in sorted(buckets.items())]
         self._summary_cache[cache_key] = summary
         return summary
+
+    def get_hourly_summary(self, day: date) -> List[dict]:
+        """Return intraday aggregates grouped by hour for a given day."""
+
+        start_dt = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+        buckets: Dict[datetime, _HourlyBucket] = {
+            start_dt + timedelta(hours=offset): _HourlyBucket(start_dt + timedelta(hours=offset))
+            for offset in range(24)
+        }
+
+        start_ts = int(start_dt.timestamp())
+        end_ts = int((start_dt + timedelta(days=1)).timestamp())
+
+        with self._connect() as conn:
+            sleep_rows = self._query_rows_in_range(
+                conn, "health_sleep_analysis", start_ts, end_ts
+            )
+            for row in sleep_rows:
+                hour = self._extract_row_hour(row)
+                if not hour or hour.date() != day:
+                    continue
+                bucket = buckets.get(hour)
+                if not bucket:
+                    continue
+                bucket.add_sleep(
+                    self._gather_numeric(row, "totalsleep"),
+                    self._gather_numeric(row, "deep"),
+                    self._gather_numeric(row, "core"),
+                    self._gather_numeric(row, "rem"),
+                )
+
+            hrv_rows = self._query_rows_in_range(
+                conn, "health_heart_rate_variability", start_ts, end_ts
+            )
+            for row in hrv_rows:
+                hour = self._extract_row_hour(row)
+                if not hour or hour.date() != day:
+                    continue
+                bucket = buckets.get(hour)
+                if not bucket:
+                    continue
+                bucket.add_hrv(self._gather_numeric(row, "qty"))
+
+            rhr_rows = self._query_rows_in_range(
+                conn, "health_resting_heart_rate", start_ts, end_ts
+            )
+            for row in rhr_rows:
+                hour = self._extract_row_hour(row)
+                if not hour or hour.date() != day:
+                    continue
+                bucket = buckets.get(hour)
+                if not bucket:
+                    continue
+                bucket.add_rhr(self._gather_numeric(row, "qty"))
+
+            resp_rows = self._query_rows_in_range(
+                conn, "health_respiratory_rate", start_ts, end_ts
+            )
+            for row in resp_rows:
+                hour = self._extract_row_hour(row)
+                if not hour or hour.date() != day:
+                    continue
+                bucket = buckets.get(hour)
+                if not bucket:
+                    continue
+                bucket.add_resp(self._gather_numeric(row, "qty"))
+
+            for table, attr in [
+                ("health_active_energy", "active_kcal"),
+                ("health_basal_energy_burned", "basal_kcal"),
+                ("health_step_count", "steps"),
+                ("health_apple_exercise_time", "exercise_min"),
+                ("health_apple_stand_hour", "stand_hours"),
+                ("health_apple_stand_time", "stand_hours"),
+            ]:
+                rows = self._query_rows_in_range(conn, table, start_ts, end_ts)
+                for row in rows:
+                    hour = self._extract_row_hour(row)
+                    if not hour or hour.date() != day:
+                        continue
+                    bucket = buckets.get(hour)
+                    if not bucket:
+                        continue
+                    bucket.add_sum(attr, self._gather_numeric(row, "qty"))
+
+        return [bucket.as_dict() for _, bucket in sorted(buckets.items())]
 
 
 def _timestamp_to_iso(ts: int) -> str:
@@ -439,6 +543,87 @@ class _DailyBucket:
     def as_dict(self) -> dict:
         return {
             "date": self.day.isoformat(),
+            "sleep_total": self.sleep_total if self._sleep_seen else None,
+            "sleep_deep": self.sleep_deep if self._sleep_seen else None,
+            "sleep_core": self.sleep_core if self._sleep_seen else None,
+            "sleep_rem": self.sleep_rem if self._sleep_seen else None,
+            "hrv": _median(self.hrv_values),
+            "rhr": _median(self.rhr_values),
+            "resp": _median(self.resp_values),
+            "active_kcal": self.active_kcal if self.active_kcal else None,
+            "basal_kcal": self.basal_kcal if self.basal_kcal else None,
+            "steps": self.steps if self.steps else None,
+            "exercise_min": self.exercise_min if self.exercise_min else None,
+            "stand_hours": self.stand_hours if self._stand_seen else None,
+        }
+
+
+class _HourlyBucket:
+    def __init__(self, hour: datetime):
+        self.hour = hour
+        self.sleep_total = 0.0
+        self.sleep_deep = 0.0
+        self.sleep_core = 0.0
+        self.sleep_rem = 0.0
+        self._sleep_seen = False
+
+        self.active_kcal = 0.0
+        self.basal_kcal = 0.0
+        self.steps = 0.0
+        self.exercise_min = 0.0
+        self.stand_hours = 0.0
+        self._stand_seen = False
+
+        self.hrv_values: List[float] = []
+        self.rhr_values: List[float] = []
+        self.resp_values: List[float] = []
+
+    def add_sleep(
+        self, total: Optional[float], deep: Optional[float], core: Optional[float], rem: Optional[float]
+    ):
+        if total is not None:
+            self.sleep_total += total
+            self._sleep_seen = True
+        if deep is not None:
+            self.sleep_deep += deep
+            self._sleep_seen = True
+        if core is not None:
+            self.sleep_core += core
+            self._sleep_seen = True
+        if rem is not None:
+            self.sleep_rem += rem
+            self._sleep_seen = True
+
+    def add_hrv(self, value: Optional[float]):
+        if value is not None:
+            self.hrv_values.append(value)
+
+    def add_rhr(self, value: Optional[float]):
+        if value is not None:
+            self.rhr_values.append(value)
+
+    def add_resp(self, value: Optional[float]):
+        if value is not None:
+            self.resp_values.append(value)
+
+    def add_sum(self, attr: str, value: Optional[float]):
+        if value is None:
+            return
+        if attr == "active_kcal":
+            self.active_kcal += value
+        elif attr == "basal_kcal":
+            self.basal_kcal += value
+        elif attr == "steps":
+            self.steps += value
+        elif attr == "exercise_min":
+            self.exercise_min += value
+        elif attr == "stand_hours":
+            self.stand_hours += value
+            self._stand_seen = True
+
+    def as_dict(self) -> dict:
+        return {
+            "date": self.hour.strftime("%H:%M"),
             "sleep_total": self.sleep_total if self._sleep_seen else None,
             "sleep_deep": self.sleep_deep if self._sleep_seen else None,
             "sleep_core": self.sleep_core if self._sleep_seen else None,

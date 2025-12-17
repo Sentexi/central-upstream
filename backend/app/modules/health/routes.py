@@ -13,15 +13,47 @@ from .repository import HealthRepository, NormalizedRecord
 bp = Blueprint("health", __name__)
 
 
+LOCK_FILENAME = "health.lock"
+
+
+def _get_db_path() -> str:
+    db_path = current_app.config.get("HEALTH_DB_PATH")
+    if not db_path:
+        db_path = os.path.join(current_app.root_path, "health.sqlite")
+
+    return db_path
+
+
+def _get_lock_path() -> str:
+    db_path = _get_db_path()
+    directory = os.path.dirname(db_path) or current_app.root_path
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, LOCK_FILENAME)
+
+
+def _set_sync_lock(lock_path: str):
+    with open(lock_path, "w", encoding="utf-8") as fh:
+        fh.write(datetime.now(timezone.utc).isoformat())
+
+
+def _clear_sync_lock(lock_path: str):
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
+
+
+def _is_syncing() -> bool:
+    lock_path = _get_lock_path()
+    return os.path.exists(lock_path)
+
+
 def _get_repository() -> HealthRepository:
     repo = current_app.extensions.get("health_repo")  # type: ignore[attr-defined]
     if repo:
         return repo
 
-    db_path = current_app.config.get("HEALTH_DB_PATH")
-    if not db_path:
-        db_path = os.path.join(current_app.root_path, "health.sqlite")
-
+    db_path = _get_db_path()
     repo = HealthRepository(db_path)
     current_app.extensions["health_repo"] = repo
     return repo
@@ -45,8 +77,11 @@ def get_settings():
 
 @bp.get("/status")
 def get_status():
+    if _is_syncing():
+        return jsonify({"syncing": True})
+
     repo = _get_repository()
-    return jsonify({"last_imported_at": repo.get_last_import_iso()})
+    return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso()})
 
 
 @bp.post("/ingest")
@@ -60,7 +95,13 @@ def ingest():
 
     batch_ts = int(datetime.now(timezone.utc).timestamp())
     repo = _get_repository()
-    stats = repo.ingest_records(normalized, batch_ts)
+    lock_path = _get_lock_path()
+    _set_sync_lock(lock_path)
+
+    try:
+        stats = repo.ingest_records(normalized, batch_ts)
+    finally:
+        _clear_sync_lock(lock_path)
 
     return (
         jsonify(

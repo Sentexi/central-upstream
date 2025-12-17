@@ -127,6 +127,18 @@ def get_sync_status():
 @bp.post("/ingest")
 def ingest():
     payload = request.get_json(silent=True) or {}
+
+    if _has_current_payload():
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "Es wird bereits ein Payload verarbeitet. Bitte später erneut versuchen.",
+                }
+            ),
+            409,
+        )
+
     current_payload_path = _persist_current_payload(payload)
     normalized = list(_normalize_payload(payload))
 
@@ -218,8 +230,23 @@ def _persist_failed_payload(payload: Any):
         json.dump(payload, fh, ensure_ascii=False, indent=2)
 
 
+def _get_current_payload_dir() -> str:
+    return os.path.join(current_app.root_path, "data", "health", "current")
+
+
+def _has_current_payload() -> bool:
+    base_dir = _get_current_payload_dir()
+    try:
+        return any(
+            os.path.isfile(os.path.join(base_dir, entry))
+            for entry in os.listdir(base_dir)
+        )
+    except FileNotFoundError:
+        return False
+
+
 def _persist_current_payload(payload: Any) -> str:
-    base_dir = os.path.join(current_app.root_path, "data", "health", "current")
+    base_dir = _get_current_payload_dir()
     os.makedirs(base_dir, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

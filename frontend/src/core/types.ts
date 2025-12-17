@@ -30,10 +30,18 @@ export interface SettingsField {
   read_only?: boolean;
 }
 
+export interface SettingsStatusMetadata {
+  endpoint: string;
+  label?: string;
+  value_key?: string;
+  formatter?: "datetime";
+}
+
 export interface SettingsModuleSchema {
   module_id: string;
   module_name: string;
   fields: SettingsField[];
+  status?: SettingsStatusMetadata | null;
 }
 
 export type SettingsValueMap = Record<string, Record<string, unknown>>;

@@ -38,11 +38,14 @@ def _validate_against_schema(module_id: str, settings: dict):
 def get_settings_schema():
     modules = []
     for provider in get_all_providers():
+        status_meta = provider.get_status_metadata()
+
         modules.append(
             {
                 "module_id": provider.module_id,
                 "module_name": provider.module_name,
                 "fields": provider.get_settings_schema(),
+                **({"status": status_meta} if status_meta else {}),
             }
         )
     return jsonify({"modules": modules})

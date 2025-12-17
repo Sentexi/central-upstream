@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 
 SettingsField = Dict[str, Any]
+SettingsStatus = Dict[str, Any]
 
 
 class ModuleSettingsProvider(ABC):
@@ -20,3 +21,7 @@ class ModuleSettingsProvider(ABC):
     def validate_settings(self, settings: Dict[str, Any]) -> Tuple[bool, str | None]:
         """Validate settings by performing live checks (e.g. API calls)."""
         raise NotImplementedError
+
+    def get_status_metadata(self) -> SettingsStatus | None:
+        """Optional status metadata to display status information in the UI."""
+        return None

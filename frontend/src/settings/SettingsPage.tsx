@@ -140,27 +140,68 @@ export function SettingsPage() {
     return parsed.toLocaleString();
   };
 
+  const formatStatusValue = (
+    statusMeta: SettingsModuleSchema["status"],
+    payload: unknown
+  ) => {
+    if (!statusMeta) return "Status";
+
+    const lookupValue =
+      statusMeta.value_key && payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)[statusMeta.value_key]
+        : payload;
+
+    if (statusMeta.formatter === "datetime") {
+      return formatLastSync((lookupValue as string | null) ?? null);
+    }
+
+    if (lookupValue === undefined || lookupValue === null) {
+      return "Keine Statusdaten";
+    }
+
+    if (typeof lookupValue === "object") {
+      return JSON.stringify(lookupValue);
+    }
+
+    return String(lookupValue);
+  };
+
   useEffect(() => {
-    const hasHealthModule = modules.some((module) => module.module_id === "health");
-    if (!hasHealthModule) {
-      return;
+    async function loadStatuses() {
+      const modulesWithStatus = modules.filter((module) => module.status?.endpoint);
+
+      await Promise.all(
+        modulesWithStatus.map(async (module) => {
+          try {
+            const response = await fetch(module.status!.endpoint);
+            const data = await response.json();
+            const messageValue = formatStatusValue(module.status, data);
+            const label = module.status?.label ?? "Status";
+
+            setStatuses((prev) => ({
+              ...prev,
+              [module.module_id]: {
+                state: "success",
+                message: `${label}: ${messageValue}`,
+              },
+            }));
+          } catch (err) {
+            console.error(`Status für Modul ${module.module_id} konnte nicht geladen werden`, err);
+            setStatuses((prev) => ({
+              ...prev,
+              [module.module_id]: {
+                state: "error",
+                message: "Status konnte nicht geladen werden",
+              },
+            }));
+          }
+        })
+      );
     }
 
-    async function loadHealthStatus() {
-      try {
-        const response = await fetch("/api/health/status");
-        const data = await response.json();
-        const formatted = formatLastSync((data && data.last_imported_at) || null);
-        setStatuses((prev) => ({
-          ...prev,
-          health: { state: "success", message: `Last sync: ${formatted}` },
-        }));
-      } catch (err) {
-        console.error("Health Status konnte nicht geladen werden", err);
-      }
+    if (modules.length > 0) {
+      loadStatuses();
     }
-
-    loadHealthStatus();
   }, [modules]);
 
   const handleChange = (moduleId: string, key: string, nextValue: unknown) => {

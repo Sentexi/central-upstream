@@ -98,6 +98,21 @@ body {
   text-align: left;
 }
 
+.nav-item.is-syncing {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.nav-item .nav-status {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sidebar.is-collapsed .nav-status {
+  display: none;
+}
+
 .nav-item .nav-icon {
   font-size: 14px;
 }

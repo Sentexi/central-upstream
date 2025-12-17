@@ -1,0 +1,90 @@
+.health-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.health-card {
+  height: 100%;
+}
+
+.metric-grid,
+.activity-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.metric,
+.activity {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.metric-header,
+.streaks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metric-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.metric-value {
+  font-weight: 700;
+}
+
+.metric-bar {
+  margin: 8px 0;
+  background: rgba(255, 255, 255, 0.08);
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.metric-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #22d3ee);
+  border-radius: 999px;
+}
+
+.metric-detail {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.stat-chip,
+.streak-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+
+.streaks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.streak-completed {
+  color: #22d3ee;
+}
+
+.streak-on-track {
+  color: #a5b4fc;
+}
+
+.streak-needs-review {
+  color: #f8a6b0;
+}

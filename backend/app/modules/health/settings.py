@@ -38,5 +38,13 @@ class HealthSettingsProvider(ModuleSettingsProvider):
         # Es gibt keine externen Credentials zu prüfen.
         return True, None
 
+    def get_status_metadata(self):
+        return {
+            "endpoint": "/api/health/status",
+            "label": "Last sync",
+            "value_key": "last_imported_at",
+            "formatter": "datetime",
+        }
+
 
 settings_provider = HealthSettingsProvider()

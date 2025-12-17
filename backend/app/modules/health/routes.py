@@ -14,6 +14,7 @@ bp = Blueprint("health", __name__)
 
 
 LOCK_FILENAME = "health.lock"
+SYNC_STATUS_FILENAME = "sync_status.json"
 
 
 def _get_db_path() -> str:
@@ -31,6 +32,13 @@ def _get_lock_path() -> str:
     return os.path.join(directory, LOCK_FILENAME)
 
 
+def _get_sync_status_path() -> str:
+    db_path = _get_db_path()
+    directory = os.path.dirname(db_path) or current_app.root_path
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, SYNC_STATUS_FILENAME)
+
+
 def _set_sync_lock(lock_path: str):
     with open(lock_path, "w", encoding="utf-8") as fh:
         fh.write(datetime.now(timezone.utc).isoformat())
@@ -46,6 +54,33 @@ def _clear_sync_lock(lock_path: str):
 def _is_syncing() -> bool:
     lock_path = _get_lock_path()
     return os.path.exists(lock_path)
+
+
+def _read_sync_status() -> Dict[str, Any]:
+    default_status = {
+        "stage": None,
+        "total_records": 0,
+        "processed_records": 0,
+        "batch_timestamp": None,
+    }
+    status_path = _get_sync_status_path()
+    try:
+        with open(status_path, "r", encoding="utf-8") as fh:
+            status = json.load(fh)
+            if isinstance(status, dict):
+                default_status.update({key: status.get(key) for key in default_status})
+    except FileNotFoundError:
+        pass
+
+    return default_status
+
+
+def _write_sync_status(**kwargs):
+    status = _read_sync_status()
+    status.update(kwargs)
+    status_path = _get_sync_status_path()
+    with open(status_path, "w", encoding="utf-8") as fh:
+        json.dump(status, fh, ensure_ascii=False, indent=2)
 
 
 def _get_repository() -> HealthRepository:
@@ -84,13 +119,31 @@ def get_status():
     return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso()})
 
 
+@bp.get("/sync_status")
+def get_sync_status():
+    return jsonify(_read_sync_status())
+
+
 @bp.post("/ingest")
 def ingest():
     payload = request.get_json(silent=True) or {}
     current_payload_path = _persist_current_payload(payload)
     normalized = list(_normalize_payload(payload))
 
+    _write_sync_status(
+        stage="normalizing",
+        total_records=len(normalized),
+        processed_records=0,
+        batch_timestamp=None,
+    )
+
     if not normalized:
+        _write_sync_status(
+            stage="error",
+            total_records=0,
+            processed_records=0,
+            batch_timestamp=None,
+        )
         _persist_failed_payload(payload)
         _archive_payload(current_payload_path)
         return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
@@ -100,9 +153,36 @@ def ingest():
     lock_path = _get_lock_path()
     _set_sync_lock(lock_path)
 
+    processed_records = 0
+    _write_sync_status(
+        stage="ingesting",
+        total_records=len(normalized),
+        processed_records=processed_records,
+        batch_timestamp=batch_ts,
+    )
+
+    stage_status = "error"
+
+    def _progress_callback(processed_count: int):
+        nonlocal processed_records
+        processed_records = processed_count
+        _write_sync_status(
+            stage="ingesting",
+            total_records=len(normalized),
+            processed_records=processed_records,
+            batch_timestamp=batch_ts,
+        )
+
     try:
-        stats = repo.ingest_records(normalized, batch_ts)
+        stats = repo.ingest_records(normalized, batch_ts, _progress_callback)
+        stage_status = "done"
     finally:
+        _write_sync_status(
+            stage=stage_status,
+            total_records=len(normalized),
+            processed_records=processed_records,
+            batch_timestamp=batch_ts,
+        )
         _clear_sync_lock(lock_path)
         _archive_payload(current_payload_path)
 

@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 
 @dataclass
@@ -88,14 +88,14 @@ class HealthRepository:
         )
         return cursor.fetchone() is not None
 
-    def _ensure_payload_columns(
+    def _ensure_payload_column_set(
         self,
         conn: sqlite3.Connection,
         table_name: str,
-        payload: Dict,
+        records: Iterable[NormalizedRecord],
         column_cache: Optional[Dict[str, set[str]]] = None,
     ) -> List[str]:
-        existing = set()
+        existing: set[str] = set()
         if column_cache is not None and table_name in column_cache:
             existing = column_cache[table_name]
         else:
@@ -103,21 +103,23 @@ class HealthRepository:
             if column_cache is not None:
                 column_cache[table_name] = existing
 
-        payload_columns: List[str] = []
-        seen: set[str] = set()
+        reserved_columns = {"id", "start_ts", "end_ts", "batch_ts", "payload"}
+        payload_columns: set[str] = set()
+        for record in records:
+            for key in record.payload.keys():
+                sanitized = self._sanitize_column_name(str(key))
+                if sanitized in reserved_columns:
+                    continue
+                payload_columns.add(sanitized)
 
-        for key in payload.keys():
-            column = self._sanitize_column_name(str(key))
-            if column not in existing:
-                conn.execute(f'ALTER TABLE {table_name} ADD COLUMN "{column}" TEXT')
-                existing.add(column)
-                if column_cache is not None:
-                    column_cache[table_name] = existing
-            if column not in seen:
-                payload_columns.append(column)
-                seen.add(column)
+        new_columns = [column for column in sorted(payload_columns) if column not in existing]
+        for column in new_columns:
+            conn.execute(f'ALTER TABLE {table_name} ADD COLUMN "{column}" TEXT')
+            existing.add(column)
+            if column_cache is not None:
+                column_cache[table_name] = existing
 
-        return payload_columns
+        return sorted(payload_columns)
 
     def _normalize_value(self, value):
         if isinstance(value, (dict, list)):
@@ -144,34 +146,131 @@ class HealthRepository:
         def _add_duration(step: str, duration_ms: float):
             durations[step] += duration_ms
 
+        connect_start = time.perf_counter()
+        records_by_table: Dict[str, List[NormalizedRecord]] = defaultdict(list)
+        for record in records:
+            table_name = self._table_name_for_type(record.data_type)
+            records_by_table[table_name].append(record)
+
         with self._connect() as conn:
-            connect_start = time.perf_counter()
-            for record in records:
-                table_name = self._table_name_for_type(record.data_type)
+            for table_name, table_records in records_by_table.items():
+                ensure_start = time.perf_counter()
                 if table_name not in table_cache:
-                    ensure_start = time.perf_counter()
                     self._ensure_table(conn, table_name)
-                    _add_duration("ensure_table", (time.perf_counter() - ensure_start) * 1000)
                     table_cache[table_name] = True
+                _add_duration("ensure_table", (time.perf_counter() - ensure_start) * 1000)
 
-                upsert_start = time.perf_counter()
-                was_inserted = self._upsert_record(
-                    conn, table_name, record, batch_ts, column_cache
+                if not table_records:
+                    continue
+
+                payload_start = time.perf_counter()
+                payload_columns = self._ensure_payload_column_set(
+                    conn, table_name, table_records, column_cache
                 )
-                _add_duration("upsert_record", (time.perf_counter() - upsert_start) * 1000)
-                processed += 1
-                if progress_callback:
-                    callback_start = time.perf_counter()
-                    progress_callback(processed)
-                    _add_duration("progress_callback", (time.perf_counter() - callback_start) * 1000)
+                _add_duration(
+                    "ensure_payload_columns",
+                    (time.perf_counter() - payload_start) * 1000,
+                )
 
-                bucket = stats.setdefault(record.data_type, {"inserted": 0, "skipped": 0})
-                if was_inserted:
-                    inserted += 1
-                    bucket["inserted"] += 1
-                else:
-                    skipped += 1
-                    bucket["skipped"] += 1
+                min_start = min(record.start_ts for record in table_records)
+                max_end = max(record.end_ts for record in table_records)
+                overlap_start = time.perf_counter()
+                overlapping_rows = conn.execute(
+                    f"SELECT id, start_ts, end_ts, batch_ts FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
+                    (max_end, min_start),
+                ).fetchall()
+                _add_duration("fetch_overlaps", (time.perf_counter() - overlap_start) * 1000)
+
+                rows_to_delete: set[int] = set()
+                pending_inserts: List[NormalizedRecord] = []
+
+                for record in table_records:
+                    overlapping_for_record = [
+                        row
+                        for row in overlapping_rows
+                        if row["start_ts"] < record.end_ts and row["end_ts"] > record.start_ts
+                    ]
+
+                    if overlapping_for_record:
+                        newest_existing = max(row["batch_ts"] for row in overlapping_for_record)
+                        if newest_existing > batch_ts:
+                            skipped += 1
+                            bucket = stats.setdefault(
+                                record.data_type, {"inserted": 0, "skipped": 0}
+                            )
+                            bucket["skipped"] += 1
+                            processed += 1
+                            if progress_callback:
+                                callback_start = time.perf_counter()
+                                progress_callback(processed)
+                                _add_duration(
+                                    "progress_callback",
+                                    (time.perf_counter() - callback_start) * 1000,
+                                )
+                            continue
+
+                        rows_to_delete.update(row["id"] for row in overlapping_for_record)
+
+                    pending_inserts.append(record)
+                    processed += 1
+                    if progress_callback:
+                        callback_start = time.perf_counter()
+                        progress_callback(processed)
+                        _add_duration(
+                            "progress_callback",
+                            (time.perf_counter() - callback_start) * 1000,
+                        )
+
+                if rows_to_delete:
+                    delete_start = time.perf_counter()
+                    placeholders = ", ".join("?" for _ in rows_to_delete)
+                    conn.execute(
+                        f"DELETE FROM {table_name} WHERE id IN ({placeholders})",
+                        tuple(rows_to_delete),
+                    )
+                    _add_duration(
+                        "delete_overlaps", (time.perf_counter() - delete_start) * 1000
+                    )
+
+                if pending_inserts:
+                    insert_start = time.perf_counter()
+                    base_columns = ["start_ts", "end_ts", "batch_ts", "payload"]
+                    insert_columns = base_columns + payload_columns
+                    placeholders = ", ".join("?" for _ in insert_columns)
+                    column_clause = ", ".join(f'"{column}"' for column in insert_columns)
+
+                    rows: List[List] = []
+                    inserted_by_type: Dict[str, int] = defaultdict(int)
+
+                    for record in pending_inserts:
+                        column_values = {}
+                        for key, value in record.payload.items():
+                            column = self._sanitize_column_name(str(key))
+                            column_values[column] = self._normalize_value(value)
+
+                        rows.append(
+                            [
+                                record.start_ts,
+                                record.end_ts,
+                                batch_ts,
+                                json.dumps(record.payload),
+                                *[column_values.get(column) for column in payload_columns],
+                            ]
+                        )
+                        inserted_by_type[record.data_type] += 1
+
+                    conn.executemany(
+                        f"INSERT INTO {table_name} ({column_clause}) VALUES ({placeholders})",
+                        rows,
+                    )
+                    _add_duration(
+                        "bulk_insert", (time.perf_counter() - insert_start) * 1000
+                    )
+
+                    for data_type, count in inserted_by_type.items():
+                        bucket = stats.setdefault(data_type, {"inserted": 0, "skipped": 0})
+                        bucket["inserted"] += count
+                        inserted += count
 
             metadata_start = time.perf_counter()
             self._set_last_import(conn, batch_ts)
@@ -213,8 +312,8 @@ class HealthRepository:
                 (record.end_ts, record.start_ts),
             )
 
-        payload_columns = self._ensure_payload_columns(
-            conn, table_name, record.payload, column_cache
+        payload_columns = self._ensure_payload_column_set(
+            conn, table_name, [record], column_cache
         )
 
         base_columns = ["start_ts", "end_ts", "batch_ts", "payload"]

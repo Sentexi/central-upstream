@@ -62,6 +62,43 @@ class HealthRepository:
             """
         )
 
+    def _sanitize_column_name(self, key: str) -> str:
+        """Return a safe column name derived from a payload key."""
+
+        sanitized = re.sub(r"[^a-z0-9_]+", "_", key.lower()).strip("_")
+        if not sanitized:
+            sanitized = "col"
+        if sanitized[0].isdigit():
+            sanitized = f"col_{sanitized}"
+        return sanitized
+
+    def _existing_columns(self, conn: sqlite3.Connection, table_name: str) -> List[str]:
+        cursor = conn.execute(f"PRAGMA table_info({table_name})")
+        return [row[1] for row in cursor.fetchall()]
+
+    def _ensure_payload_columns(
+        self, conn: sqlite3.Connection, table_name: str, payload: Dict
+    ) -> List[str]:
+        existing = set(self._existing_columns(conn, table_name))
+        payload_columns: List[str] = []
+        seen: set[str] = set()
+
+        for key in payload.keys():
+            column = self._sanitize_column_name(str(key))
+            if column not in existing:
+                conn.execute(f'ALTER TABLE {table_name} ADD COLUMN "{column}" TEXT')
+                existing.add(column)
+            if column not in seen:
+                payload_columns.append(column)
+                seen.add(column)
+
+        return payload_columns
+
+    def _normalize_value(self, value):
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return value
+
     def ingest_records(
         self,
         records: List[NormalizedRecord],
@@ -119,9 +156,31 @@ class HealthRepository:
                 (record.end_ts, record.start_ts),
             )
 
+        payload_columns = self._ensure_payload_columns(
+            conn, table_name, record.payload
+        )
+
+        base_columns = ["start_ts", "end_ts", "batch_ts", "payload"]
+        insert_columns = base_columns + payload_columns
+        placeholders = ", ".join("?" for _ in insert_columns)
+        column_clause = ", ".join(f'"{column}"' for column in insert_columns)
+
+        column_values = {}
+        for key, value in record.payload.items():
+            column = self._sanitize_column_name(str(key))
+            column_values[column] = self._normalize_value(value)
+
+        values = [
+            record.start_ts,
+            record.end_ts,
+            batch_ts,
+            json.dumps(record.payload),
+            *[column_values.get(column) for column in payload_columns],
+        ]
+
         conn.execute(
-            f"INSERT INTO {table_name} (start_ts, end_ts, batch_ts, payload) VALUES (?, ?, ?, ?)",
-            (record.start_ts, record.end_ts, batch_ts, json.dumps(record.payload)),
+            f"INSERT INTO {table_name} ({column_clause}) VALUES ({placeholders})",
+            values,
         )
         return True
 

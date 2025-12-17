@@ -15,6 +15,37 @@ function formatValue(value?: number | null, digits = 1) {
   return Number(value).toFixed(digits);
 }
 
+function generateTicks(minValue: number, maxValue: number, count = 4) {
+  if (count < 2) return [maxValue];
+
+  if (minValue === maxValue) {
+    const wiggle = minValue === 0 ? 1 : Math.abs(minValue) * 0.25;
+    minValue -= wiggle;
+    maxValue += wiggle;
+  }
+
+  const span = maxValue - minValue || 1;
+  const roughStep = span / (count - 1);
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(roughStep, 1)));
+  const step = Math.ceil(roughStep / magnitude) * magnitude;
+  const start = Math.floor(minValue / step) * step;
+  const end = Math.ceil(maxValue / step) * step;
+
+  const ticks: number[] = [];
+  for (let v = start; v <= end + step / 2; v += step) {
+    ticks.push(Number(v.toFixed(6)));
+  }
+
+  return ticks;
+}
+
+function formatTickLabel(value: number) {
+  const abs = Math.abs(value);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
 function Barometer({ color, score }: { color?: string; score?: number }) {
   const safeColor = color ?? "gray";
   const clamped = Math.max(0, Math.min(score ?? 0, 100));
@@ -90,9 +121,18 @@ function LineChart({
   const margin = { top: 20, right: 24, bottom: 26, left: 48 };
   const step = (width - margin.left - margin.right) / Math.max(data.length - 1, 1);
 
+  const domainMin = min - padding;
+  const domainMax = max + padding;
+  const yTicks = generateTicks(domainMin, domainMax, 5);
+  const xTickCount = Math.min(5, data.length || 1);
+  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((data.length - 1) / (xTickCount - 1))) : 1;
+  const xTickIndices = Array.from({ length: data.length }, (_, idx) => idx).filter(
+    (idx) => idx % xTickStep === 0 || idx === data.length - 1
+  );
+
   const scaleY = (value: number) => {
-    const range = max - min || 1;
-    const relative = (value - (min - padding)) / (range + padding * 2);
+    const range = domainMax - domainMin || 1;
+    const relative = (value - domainMin) / range;
     return margin.top + (1 - relative) * (height - margin.top - margin.bottom);
   };
 
@@ -133,6 +173,17 @@ function LineChart({
             height={height - margin.top - margin.bottom}
             fill="rgba(255,255,255,0.02)"
           />
+          {yTicks.map((tick) => {
+            const y = scaleY(tick);
+            return (
+              <g key={tick}>
+                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
+                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
+                  {formatTickLabel(tick)}
+                </text>
+              </g>
+            );
+          })}
           <path d={path} fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
           {points.map((p, idx) => (
             <circle key={idx} cx={p.x} cy={p.y} r={3} fill={color} />
@@ -145,12 +196,17 @@ function LineChart({
             className="chart-axis"
           />
           <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          <text x={width - margin.right} y={height - 6} className="chart-tick-label" textAnchor="end">
-            {data.length > 0 ? data[data.length - 1].date : ""}
-          </text>
-          <text x={margin.left} y={height - 6} className="chart-tick-label" textAnchor="start">
-            {data.length > 0 ? data[0].date : ""}
-          </text>
+          {xTickIndices.map((idx) => {
+            const x = margin.left + idx * step;
+            return (
+              <g key={data[idx].date + idx}>
+                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
+                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
+                  {data[idx].date}
+                </text>
+              </g>
+            );
+          })}
         </svg>
       </div>
     </GlassCard>
@@ -166,6 +222,16 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
   const width = Math.max(360, data.length * 36);
   const margin = { top: 20, right: 20, bottom: 26, left: 52 };
   const stepWidth = (width - margin.left - margin.right) / Math.max(data.length, 1);
+  const innerHeight = height - margin.top - margin.bottom - 40;
+
+  const yTicks = generateTicks(0, maxSteps, 5);
+  const xTickCount = Math.min(5, data.length || 1);
+  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((data.length - 1) / (xTickCount - 1))) : 1;
+  const xTickIndices = Array.from({ length: data.length }, (_, idx) => idx).filter(
+    (idx) => idx % xTickStep === 0 || idx === data.length - 1
+  );
+
+  const valueToY = (value: number) => height - margin.bottom - (value / maxSteps) * innerHeight;
 
   return (
     <GlassCard className="chart-panel">
@@ -181,6 +247,17 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
       </div>
       <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
         <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Steps and exercise chart">
+          {yTicks.map((tick) => {
+            const y = valueToY(tick);
+            return (
+              <g key={`y-${tick}`}>
+                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
+                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
+                  {formatTickLabel(tick)}
+                </text>
+              </g>
+            );
+          })}
           <line
             x1={margin.left}
             x2={width - margin.right}
@@ -214,6 +291,17 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
                   opacity={0.8}
                   rx={3}
                 />
+              </g>
+              );
+            })}
+          {xTickIndices.map((idx) => {
+            const x = margin.left + idx * stepWidth + stepWidth / 2;
+            return (
+              <g key={`x-${data[idx].date}-${idx}`}>
+                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
+                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
+                  {data[idx].date}
+                </text>
               </g>
             );
           })}

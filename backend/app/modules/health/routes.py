@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List
+from datetime import date, datetime, timedelta, timezone
+from statistics import median
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
@@ -435,3 +436,204 @@ def _parse_dt(value: Any):
         return dt
 
     return None
+
+
+RANGE_DAYS = {"today": 1, "7d": 7, "14d": 14, "30d": 30}
+
+
+def _robust_stats(values: List[float]) -> tuple[Optional[float], Optional[float]]:
+    if not values:
+        return None, None
+
+    med = float(median(values))
+    mad = float(median([abs(v - med) for v in values]))
+    if mad == 0:
+        mad = 1e-6
+    return med, mad
+
+
+def _z_score(value: Optional[float], med: Optional[float], mad: Optional[float]) -> float:
+    if value is None or med is None or mad is None:
+        return 0.0
+    return (value - med) / mad
+
+
+def _score_positive(z: float) -> int:
+    clamped = max(min(z, 2.5), -2.5)
+    normalized = (clamped + 2.5) / 5
+    return round(normalized * 100)
+
+
+def _score_negative(z: float) -> int:
+    return _score_positive(-z)
+
+
+def _color_for_score(score: int) -> str:
+    if score >= 70:
+        return "green"
+    if score >= 45:
+        return "yellow"
+    return "red"
+
+
+def _format_delta(value: Optional[float], baseline: Optional[float], unit: str = "") -> str:
+    if value is None or baseline is None:
+        return "Keine Baseline"
+    diff = value - baseline
+    if baseline != 0:
+        pct = diff / baseline * 100
+        return f"{diff:+.1f}{unit} ({pct:+.0f}%)"
+    return f"{diff:+.1f}{unit}"
+
+
+def _latest_entry_with_data(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for entry in reversed(entries):
+        if any(
+            entry.get(key) is not None
+            for key in ("hrv", "rhr", "sleep_total", "steps", "exercise_min")
+        ):
+            return entry
+    return entries[-1] if entries else None
+
+
+def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str, Any]], range_key: str):
+    current = _latest_entry_with_data(series)
+    today = current.get("date") if current else None
+
+    sleep_values = [row["sleep_total"] for row in baseline if row.get("sleep_total") is not None]
+    hrv_values = [row["hrv"] for row in baseline if row.get("hrv") is not None]
+    rhr_values = [row["rhr"] for row in baseline if row.get("rhr") is not None]
+    resp_values = [row["resp"] for row in baseline if row.get("resp") is not None]
+    steps_values = [row["steps"] for row in baseline if row.get("steps") is not None]
+    exercise_values = [row["exercise_min"] for row in baseline if row.get("exercise_min") is not None]
+
+    sleep_med, sleep_mad = _robust_stats(sleep_values)
+    hrv_med, hrv_mad = _robust_stats(hrv_values)
+    rhr_med, rhr_mad = _robust_stats(rhr_values)
+    resp_med, resp_mad = _robust_stats(resp_values)
+    steps_med, _ = _robust_stats(steps_values)
+    exercise_med, _ = _robust_stats(exercise_values)
+
+    z_sleep = _z_score(current.get("sleep_total") if current else None, sleep_med, sleep_mad)
+    z_hrv = _z_score(current.get("hrv") if current else None, hrv_med, hrv_mad)
+    z_rhr = _z_score(current.get("rhr") if current else None, rhr_med, rhr_mad)
+    z_resp = _z_score(current.get("resp") if current else None, resp_med, resp_mad)
+
+    sleep_score = _score_positive(z_sleep)
+    hrv_score = _score_positive(z_hrv)
+    rhr_score = _score_negative(z_rhr)
+
+    readiness = round(sleep_score * 0.4 + hrv_score * 0.35 + rhr_score * 0.25)
+    if abs(z_resp) > 1.5:
+        readiness = max(0, readiness - 5)
+
+    readiness_color = _color_for_score(readiness)
+
+    tiles = {
+        "readiness": {
+            "label": "Readiness",
+            "score": readiness,
+            "color": readiness_color,
+            "date": today,
+            "delta_text": _format_delta(current.get("hrv") if current else None, hrv_med, " ms"),
+            "components": {
+                "sleep": sleep_score,
+                "hrv": hrv_score,
+                "rhr": rhr_score,
+            },
+        },
+        "sleep": {
+            "label": "Schlaf",
+            "value": current.get("sleep_total") if current else None,
+            "unit": "min",
+            "delta_text": _format_delta(current.get("sleep_total") if current else None, sleep_med, " min"),
+            "score": sleep_score,
+            "color": _color_for_score(sleep_score),
+        },
+        "hrv": {
+            "label": "HRV",
+            "value": current.get("hrv") if current else None,
+            "unit": "ms",
+            "delta_text": _format_delta(current.get("hrv") if current else None, hrv_med, " ms"),
+            "score": hrv_score,
+            "color": _color_for_score(hrv_score),
+        },
+        "rhr": {
+            "label": "Ruhepuls",
+            "value": current.get("rhr") if current else None,
+            "unit": "bpm",
+            "delta_text": _format_delta(current.get("rhr") if current else None, rhr_med, " bpm"),
+            "score": rhr_score,
+            "color": _color_for_score(rhr_score),
+        },
+        "load": {
+            "label": "Load",
+            "steps": current.get("steps") if current else None,
+            "exercise_min": current.get("exercise_min") if current else None,
+            "active_kcal": current.get("active_kcal") if current else None,
+            "delta_text": _format_delta(
+                current.get("steps") if current else None, steps_med, " steps"
+            ),
+            "score": readiness,
+            "color": readiness_color,
+        },
+    }
+
+    signals: List[str] = []
+    if z_hrv <= -1:
+        signals.append("HRV unter Baseline")
+    if z_rhr >= 1:
+        signals.append("Ruhepuls erhöht")
+    if z_sleep <= -1:
+        signals.append("Schlaf kürzer als üblich")
+    if abs(z_resp) >= 1.5:
+        signals.append("Atemfrequenz auffällig")
+
+    series_payload = {
+        "hrv": [{"date": row["date"], "value": row.get("hrv")} for row in series],
+        "rhr": [{"date": row["date"], "value": row.get("rhr")} for row in series],
+        "sleep_total": [
+            {"date": row["date"], "value": row.get("sleep_total")} for row in series
+        ],
+        "activity": [
+            {
+                "date": row["date"],
+                "steps": row.get("steps"),
+                "exercise_min": row.get("exercise_min"),
+                "active_kcal": row.get("active_kcal"),
+            }
+            for row in series
+        ],
+    }
+
+    return {
+        "range": range_key,
+        "tiles": tiles,
+        "series": series_payload,
+        "signals": signals,
+        "baseline": {
+            "sleep": sleep_med,
+            "hrv": hrv_med,
+            "rhr": rhr_med,
+            "resp": resp_med,
+            "steps": steps_med,
+            "exercise_min": exercise_med,
+        },
+    }
+
+
+@bp.get("/energy-monitor")
+def energy_monitor():
+    range_key = request.args.get("range", "7d").lower()
+    days = RANGE_DAYS.get(range_key, 7)
+
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+
+    repo = _get_repository()
+    series = repo.get_daily_summary(start, today)
+    baseline_start = today - timedelta(days=max(30, days) - 1)
+    baseline = repo.get_daily_summary(baseline_start, today)
+
+    payload = _build_energy_payload(series, baseline, range_key)
+    return jsonify(payload)

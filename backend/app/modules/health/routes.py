@@ -97,10 +97,13 @@ def _persist_failed_payload(payload: Any):
 def _normalize_payload(payload: Any) -> Iterable[NormalizedRecord]:
     records: List[Dict[str, Any]] = []
     if isinstance(payload, dict):
-        for key in ("records", "data", "items"):
-            if key in payload and isinstance(payload[key], list):
-                records = payload[key]
-                break
+        records = _extract_auto_export_records(payload)
+
+        if not records:
+            for key in ("records", "data", "items"):
+                if key in payload and isinstance(payload[key], list):
+                    records = payload[key]
+                    break
         if not records and isinstance(payload.get("record"), dict):
             records = [payload["record"]]
     elif isinstance(payload, list):
@@ -155,6 +158,71 @@ def _extract_type(record: Dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _extract_auto_export_records(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Flatten Health Auto Export payloads into generic records.
+
+    The Auto Export format nests lists under ``data`` with a ``metrics`` list
+    (and potentially other arrays). Each metric contains a ``name`` and a
+    ``data`` list with entries that hold the actual values. We lift these
+    entries into flat records and annotate them with a ``metric`` value so the
+    ingest pipeline can categorize them.
+    """
+
+    data_section = payload.get("data")
+    if not isinstance(data_section, dict):
+        return []
+
+    records: List[Dict[str, Any]] = []
+
+    metrics = data_section.get("metrics")
+    if isinstance(metrics, list):
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+
+            name = metric.get("name")
+            unit = metric.get("units")
+            entries = metric.get("data")
+            if not isinstance(name, str) or not isinstance(entries, list):
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+
+                record = dict(entry)
+                record.setdefault("metric", name)
+                if unit is not None:
+                    record.setdefault("units", unit)
+
+                # Many entries only provide a single timestamp as "date". Mirror
+                # it into start/end so our parser can derive a valid interval.
+                if "date" in record:
+                    record.setdefault("start", record.get("date"))
+                    record.setdefault("end", record.get("date"))
+
+                records.append(record)
+
+    # Fall back: include other lists under the data section as generic records
+    # and tag them with the respective key to ensure a metric/type is present.
+    for key, items in data_section.items():
+        if key == "metrics" or not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            record = dict(item)
+            record.setdefault("metric", key)
+            if "date" in record:
+                record.setdefault("start", record.get("date"))
+                record.setdefault("end", record.get("date"))
+            records.append(record)
+
+    return records
 
 
 def _parse_dt(value: Any):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
@@ -54,6 +55,7 @@ def ingest():
     normalized = list(_normalize_payload(payload))
 
     if not normalized:
+        _persist_failed_payload(payload)
         return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
 
     batch_ts = int(datetime.now(timezone.utc).timestamp())
@@ -72,6 +74,24 @@ def ingest():
         ),
         201,
     )
+
+
+def _persist_failed_payload(payload: Any):
+    base_dir = os.path.join(current_app.root_path, "data", "health", "failed")
+    timestamp_dir = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target_dir = os.path.join(base_dir, timestamp_dir)
+    os.makedirs(target_dir, exist_ok=True)
+
+    filename = "payload.json"
+    path = os.path.join(target_dir, filename)
+    suffix = 1
+    while os.path.exists(path):
+        filename = f"payload_{suffix}.json"
+        path = os.path.join(target_dir, filename)
+        suffix += 1
+
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
 
 
 def _normalize_payload(payload: Any) -> Iterable[NormalizedRecord]:

@@ -87,9 +87,20 @@ class HealthRepository:
         return cursor.fetchone() is not None
 
     def _ensure_payload_columns(
-        self, conn: sqlite3.Connection, table_name: str, payload: Dict
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        payload: Dict,
+        column_cache: Optional[Dict[str, set[str]]] = None,
     ) -> List[str]:
-        existing = set(self._existing_columns(conn, table_name))
+        existing = set()
+        if column_cache is not None and table_name in column_cache:
+            existing = column_cache[table_name]
+        else:
+            existing = set(self._existing_columns(conn, table_name))
+            if column_cache is not None:
+                column_cache[table_name] = existing
+
         payload_columns: List[str] = []
         seen: set[str] = set()
 
@@ -98,6 +109,8 @@ class HealthRepository:
             if column not in existing:
                 conn.execute(f'ALTER TABLE {table_name} ADD COLUMN "{column}" TEXT')
                 existing.add(column)
+                if column_cache is not None:
+                    column_cache[table_name] = existing
             if column not in seen:
                 payload_columns.append(column)
                 seen.add(column)
@@ -120,11 +133,19 @@ class HealthRepository:
         skipped = 0
         processed = 0
 
+        table_cache: Dict[str, bool] = {}
+        column_cache: Dict[str, set[str]] = {}
+
         with self._connect() as conn:
             for record in records:
                 table_name = self._table_name_for_type(record.data_type)
-                self._ensure_table(conn, table_name)
-                was_inserted = self._upsert_record(conn, table_name, record, batch_ts)
+                if table_name not in table_cache:
+                    self._ensure_table(conn, table_name)
+                    table_cache[table_name] = True
+
+                was_inserted = self._upsert_record(
+                    conn, table_name, record, batch_ts, column_cache
+                )
                 processed += 1
                 if progress_callback:
                     progress_callback(processed)
@@ -148,6 +169,7 @@ class HealthRepository:
         table_name: str,
         record: NormalizedRecord,
         batch_ts: int,
+        column_cache: Optional[Dict[str, set[str]]] = None,
     ) -> bool:
         """Insert or skip a record depending on overlap and batch recency."""
 
@@ -167,7 +189,7 @@ class HealthRepository:
             )
 
         payload_columns = self._ensure_payload_columns(
-            conn, table_name, record.payload
+            conn, table_name, record.payload, column_cache
         )
 
         base_columns = ["start_ts", "end_ts", "batch_ts", "payload"]

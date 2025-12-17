@@ -109,6 +109,8 @@ export function SettingsPage() {
   const [values, setValues] = useState<SettingsValueMap>({});
   const [loading, setLoading] = useState(true);
   const [statuses, setStatuses] = useState<StatusMap>({});
+  const [healthUploading, setHealthUploading] = useState(false);
+  const [healthUploadError, setHealthUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function bootstrap() {
@@ -279,6 +281,40 @@ export function SettingsPage() {
     setStatuses((prev) => ({ ...prev, [moduleId]: { state: status, message } }));
   };
 
+  const handleHealthUpload = async (file: File) => {
+    setHealthUploadError(null);
+    setHealthUploading(true);
+    setStatus("health", "saving", "Import wird vorbereitet...");
+
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+
+      const response = await fetch("/api/health/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        const errorMessage = data?.error ?? "Import fehlgeschlagen";
+        setHealthUploadError(errorMessage);
+        setStatus("health", "error", errorMessage);
+        return;
+      }
+
+      setStatus("health", "syncing", "Sync wird gestartet...");
+      fetchStatuses();
+    } catch (err) {
+      console.error("Health Upload fehlgeschlagen", err);
+      setHealthUploadError("Ungültige JSON-Datei oder Netzwerkfehler beim Import");
+      setStatus("health", "error", "Upload fehlgeschlagen");
+    } finally {
+      setHealthUploading(false);
+    }
+  };
+
   const validateLocally = (module: SettingsModuleSchema) => {
     const moduleValues = values[module.module_id] ?? {};
     const missing = module.fields
@@ -425,6 +461,40 @@ export function SettingsPage() {
                     )}
                   </label>
                 ))}
+
+                {module.module_id === "health" && (
+                  <div className="manual-import">
+                    <div className="settings-field__meta">
+                      <span className="settings-label">Manueller Import</span>
+                      <span className="muted">
+                        Lade einen Health Auto Export als JSON hoch. Die Datei wird direkt
+                        importiert und triggert den Sync-Prozess.
+                      </span>
+                    </div>
+                    <label className="manual-import__controls">
+                      <input
+                        type="file"
+                        accept="application/json,.json"
+                        className="input"
+                        onChange={(event) => {
+                          const nextFile = event.target.files?.[0];
+                          if (!nextFile) return;
+                          event.target.value = "";
+                          handleHealthUpload(nextFile);
+                        }}
+                        disabled={healthUploading}
+                      />
+                      <span className="muted small">
+                        {healthUploading
+                          ? "Upload & Sync laufen..."
+                          : "Maximal 1 Datei, JSON-Format"}
+                      </span>
+                    </label>
+                    {healthUploadError && (
+                      <div className="settings-error">{healthUploadError}</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {status.state === "error" && status.message && (

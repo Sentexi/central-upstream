@@ -278,10 +278,10 @@ class HealthRepository:
                 if key not in buckets:
                     continue
                 buckets[key].add_sleep(
-                    _parse_float(row.get("totalsleep")),
-                    _parse_float(row.get("deep")),
-                    _parse_float(row.get("core")),
-                    _parse_float(row.get("rem")),
+                    self._gather_numeric(row, "totalsleep"),
+                    self._gather_numeric(row, "deep"),
+                    self._gather_numeric(row, "core"),
+                    self._gather_numeric(row, "rem"),
                 )
 
             hrv_rows = self._query_rows_in_range(

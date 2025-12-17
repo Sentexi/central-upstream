@@ -401,6 +401,21 @@ body {
   margin-top: 8px;
 }
 
+.manual-import {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 10px;
+}
+
+.manual-import__controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .settings-field {
   display: grid;
   gap: 6px;

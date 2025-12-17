@@ -631,7 +631,10 @@ def energy_monitor():
     start = today - timedelta(days=days - 1)
 
     repo = _get_repository()
-    series = repo.get_daily_summary(start, today)
+    if range_key == "today":
+        series = repo.get_hourly_summary(today)
+    else:
+        series = repo.get_daily_summary(start, today)
     baseline_start = today - timedelta(days=max(30, days) - 1)
     baseline = repo.get_daily_summary(baseline_start, today)
 

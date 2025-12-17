@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
 
+from .analytics import FitnessAnalytics
 from .repository import HealthRepository, NormalizedRecord
 
 bp = Blueprint("health", __name__)
@@ -94,6 +95,11 @@ def _get_repository() -> HealthRepository:
     return repo
 
 
+def _get_analytics() -> FitnessAnalytics:
+    db_path = _get_db_path()
+    return FitnessAnalytics(db_path)
+
+
 @bp.get("/settings")
 def get_settings():
     ingest_path = "/api/health/ingest"
@@ -122,6 +128,16 @@ def get_status():
 @bp.get("/sync_status")
 def get_sync_status():
     return jsonify(_read_sync_status())
+
+
+@bp.get("/fitness")
+def get_fitness_view():
+    range_key = request.args.get("range", "7d")
+    group = request.args.get("group", "daily")
+
+    analytics = _get_analytics()
+    payload = analytics.build_payload(range_key, group)
+    return jsonify(payload)
 
 
 @bp.post("/ingest")

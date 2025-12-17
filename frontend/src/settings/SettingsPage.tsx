@@ -6,7 +6,7 @@ import type {
   SettingsValueMap,
 } from "../core/types";
 
-type StatusState = "idle" | "saving" | "error" | "success";
+type StatusState = "idle" | "saving" | "error" | "success" | "syncing";
 
 type StatusMap = Record<string, { state: StatusState; message?: string }>; // keyed by module_id
 
@@ -175,6 +175,15 @@ export function SettingsPage() {
           try {
             const response = await fetch(module.status!.endpoint);
             const data = await response.json();
+
+            if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
+              setStatuses((prev) => ({
+                ...prev,
+                [module.module_id]: { state: "syncing", message: "syncing" },
+              }));
+              return;
+            }
+
             const messageValue = formatStatusValue(module.status, data);
             const label = module.status?.label ?? "Status";
 
@@ -319,7 +328,9 @@ export function SettingsPage() {
                   {status.state === "success"
                     ? status.message ?? "Verbunden"
                     : status.state === "saving"
-                    ? "Validiere..."
+                    ? status.message ?? "Validiere..."
+                    : status.state === "syncing"
+                    ? status.message ?? "syncing"
                     : status.state === "error"
                     ? "Fehler"
                     : "Bereit"}

@@ -15,5 +15,10 @@ class HealthModule(BaseModule):
         # Health benötigt keine externen Credentials und ist sofort bereit.
         return True
 
+    def get_manifest(self) -> dict:
+        manifest = super().get_manifest()
+        manifest["slots"] = ["dashboard_view"]
+        return manifest
+
 
 module = HealthModule()

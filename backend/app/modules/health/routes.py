@@ -113,7 +113,7 @@ def get_settings():
 @bp.get("/status")
 def get_status():
     if _is_syncing():
-        return jsonify({"syncing": True})
+        return jsonify({"syncing": True, "sync_status": _read_sync_status()})
 
     repo = _get_repository()
     return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso()})

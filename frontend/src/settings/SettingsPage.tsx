@@ -1,4 +1,4 @@
-import React, { ChangeEvent, useEffect, useMemo, useState } from "react";
+import React, { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { GlassCard } from "../core/GlassCard";
 import type {
   SettingsField,
@@ -8,7 +8,20 @@ import type {
 
 type StatusState = "idle" | "saving" | "error" | "success" | "syncing";
 
-type StatusMap = Record<string, { state: StatusState; message?: string }>; // keyed by module_id
+type StatusProgress = {
+  processed: number;
+  total: number;
+  percent: number;
+  stage?: string;
+};
+
+type StatusEntry = {
+  state: StatusState;
+  message?: string;
+  progress?: StatusProgress;
+};
+
+type StatusMap = Record<string, StatusEntry>; // keyed by module_id
 
 function getInitialValues(
   modules: SettingsModuleSchema[],
@@ -166,52 +179,91 @@ export function SettingsPage() {
     return String(lookupValue);
   };
 
-  useEffect(() => {
-    async function loadStatuses() {
-      const modulesWithStatus = modules.filter((module) => module.status?.endpoint);
+  const parseSyncStatus = (value: unknown): StatusProgress => {
+    if (value === undefined || value === null) {
+      return { processed: 0, total: 0, percent: 0, stage: undefined };
+    }
 
-      await Promise.all(
-        modulesWithStatus.map(async (module) => {
-          try {
-            const response = await fetch(module.status!.endpoint);
-            const data = await response.json();
+    const total = Number((value as { total_records?: number }).total_records ?? 0);
+    const processed = Number(
+      (value as { processed_records?: number }).processed_records ?? 0
+    );
+    const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+    const stage = (value as { stage?: string | null }).stage ?? undefined;
 
-            if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
-              setStatuses((prev) => ({
-                ...prev,
-                [module.module_id]: { state: "syncing", message: "syncing" },
-              }));
-              return;
-            }
+    return { processed, total, percent, stage };
+  };
 
-            const messageValue = formatStatusValue(module.status, data);
-            const label = module.status?.label ?? "Status";
+  const fetchStatuses = useCallback(async () => {
+    const modulesWithStatus = modules.filter((module) => module.status?.endpoint);
+
+    await Promise.all(
+      modulesWithStatus.map(async (module) => {
+        try {
+          const response = await fetch(module.status!.endpoint);
+          const data = await response.json();
+
+          if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
+            const syncStatus = parseSyncStatus((data as { sync_status?: unknown }).sync_status);
 
             setStatuses((prev) => ({
               ...prev,
               [module.module_id]: {
-                state: "success",
-                message: `${label}: ${messageValue}`,
+                state: "syncing",
+                message: syncStatus.stage
+                  ? `Syncing (${syncStatus.stage})`
+                  : "Syncing läuft...",
+                progress: syncStatus,
               },
             }));
-          } catch (err) {
-            console.error(`Status für Modul ${module.module_id} konnte nicht geladen werden`, err);
-            setStatuses((prev) => ({
-              ...prev,
-              [module.module_id]: {
-                state: "error",
-                message: "Status konnte nicht geladen werden",
-              },
-            }));
+            return;
           }
-        })
-      );
+
+          const messageValue = formatStatusValue(module.status, data);
+          const label = module.status?.label ?? "Status";
+
+          setStatuses((prev) => ({
+            ...prev,
+            [module.module_id]: {
+              state: "success",
+              message: `${label}: ${messageValue}`,
+            },
+          }));
+        } catch (err) {
+          console.error(`Status für Modul ${module.module_id} konnte nicht geladen werden`, err);
+          setStatuses((prev) => ({
+            ...prev,
+            [module.module_id]: {
+              state: "error",
+              message: "Status konnte nicht geladen werden",
+            },
+          }));
+        }
+      })
+    );
+  }, [formatStatusValue, modules]);
+
+  useEffect(() => {
+    if (modules.length > 0) {
+      fetchStatuses();
+    }
+  }, [fetchStatuses, modules.length]);
+
+  useEffect(() => {
+    const hasSyncingModule = modules.some(
+      (module) => statuses[module.module_id]?.state === "syncing"
+    );
+
+    if (!hasSyncingModule) {
+      return undefined;
     }
 
-    if (modules.length > 0) {
-      loadStatuses();
-    }
-  }, [modules]);
+    const interval = window.setInterval(() => {
+      fetchStatuses();
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+  }, [fetchStatuses, modules, statuses]);
 
   const handleChange = (moduleId: string, key: string, nextValue: unknown) => {
     setValues((prev) => ({
@@ -338,6 +390,27 @@ export function SettingsPage() {
               </div>
 
               <div className="stack settings-fields">
+                {status.state === "syncing" && status.progress && (
+                  <div className="sync-progress" role="status" aria-live="polite">
+                    <div className="sync-progress__labels">
+                      <span className="muted small">
+                        {status.progress.stage
+                          ? `Syncing (${status.progress.stage})`
+                          : "Syncing läuft..."}
+                      </span>
+                      <span className="muted small">
+                        {status.progress.processed}/{status.progress.total || "?"} (
+                        {status.progress.percent}% )
+                      </span>
+                    </div>
+                    <div className="progress-bar">
+                      <div
+                        className="progress-bar__fill"
+                        style={{ width: `${status.progress.percent}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {module.fields.map((field) => (
                   <label className="settings-field" key={`${module.module_id}-${field.key}`}>
                     <div className="settings-field__meta">

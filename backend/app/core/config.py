@@ -6,6 +6,7 @@ def load_config(app):
     app.config["DEBUG"] = app.config["ENV"] == "development"
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret")
     app.config["HEALTH_DB_PATH"] = os.getenv(
-        "HEALTH_DB_PATH", os.path.join(app.root_path, "health.sqlite")
+        "HEALTH_DB_PATH",
+        os.path.join(app.root_path, "data", "health", "health.sqlite"),
     )
     # Hier später: weitere DB-URLs, Feature-Flags, etc.

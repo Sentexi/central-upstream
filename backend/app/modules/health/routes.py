@@ -19,7 +19,7 @@ LOCK_FILENAME = "health.lock"
 def _get_db_path() -> str:
     db_path = current_app.config.get("HEALTH_DB_PATH")
     if not db_path:
-        db_path = os.path.join(current_app.root_path, "health.sqlite")
+        db_path = os.path.join(current_app.root_path, "data", "health", "health.sqlite")
 
     return db_path
 
@@ -87,10 +87,12 @@ def get_status():
 @bp.post("/ingest")
 def ingest():
     payload = request.get_json(silent=True) or {}
+    current_payload_path = _persist_current_payload(payload)
     normalized = list(_normalize_payload(payload))
 
     if not normalized:
         _persist_failed_payload(payload)
+        _archive_payload(current_payload_path)
         return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
 
     batch_ts = int(datetime.now(timezone.utc).timestamp())
@@ -102,6 +104,7 @@ def ingest():
         stats = repo.ingest_records(normalized, batch_ts)
     finally:
         _clear_sync_lock(lock_path)
+        _archive_payload(current_payload_path)
 
     return (
         jsonify(
@@ -133,6 +136,43 @@ def _persist_failed_payload(payload: Any):
 
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+
+def _persist_current_payload(payload: Any) -> str:
+    base_dir = os.path.join(current_app.root_path, "data", "health", "current")
+    os.makedirs(base_dir, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    filename = f"payload_{timestamp}.json"
+    path = os.path.join(base_dir, filename)
+    suffix = 1
+    while os.path.exists(path):
+        filename = f"payload_{timestamp}_{suffix}.json"
+        path = os.path.join(base_dir, filename)
+        suffix += 1
+
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+    return path
+
+
+def _archive_payload(source_path: str):
+    if not source_path or not os.path.exists(source_path):
+        return
+
+    target_dir = os.path.join(current_app.root_path, "data", "health", "payloads")
+    os.makedirs(target_dir, exist_ok=True)
+
+    filename = os.path.basename(source_path)
+    name, ext = os.path.splitext(filename)
+    target_path = os.path.join(target_dir, filename)
+    suffix = 1
+    while os.path.exists(target_path):
+        target_path = os.path.join(target_dir, f"{name}_{suffix}{ext}")
+        suffix += 1
+
+    os.replace(source_path, target_path)
 
 
 def _normalize_payload(payload: Any) -> Iterable[NormalizedRecord]:

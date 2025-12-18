@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List
+from datetime import date, datetime, timedelta, timezone
+from statistics import median, pstdev
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
@@ -89,9 +91,38 @@ def _get_repository() -> HealthRepository:
         return repo
 
     db_path = _get_db_path()
-    repo = HealthRepository(db_path)
+    table_schemas = _load_table_schemas()
+    repo = HealthRepository(db_path, table_schemas=table_schemas)
     current_app.extensions["health_repo"] = repo
     return repo
+
+
+def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
+    cached = current_app.extensions.get("health_table_schemas")  # type: ignore[attr-defined]
+    if cached is not None:
+        return cached
+
+    schema_path = current_app.config.get("HEALTH_DB_SCHEMA_PATH")
+    if not schema_path:
+        return None
+
+    table_schemas: Optional[Dict[str, set[str]]] = None
+    try:
+        with open(schema_path, "r", encoding="utf-8") as schema_file:
+            loaded = json.load(schema_file)
+            if isinstance(loaded, dict):
+                table_schemas = {
+                    str(table_name): {str(column_name) for column_name in columns}
+                    for table_name, columns in loaded.items()
+                    if isinstance(columns, list)
+                }
+    except FileNotFoundError:
+        table_schemas = None
+    except json.JSONDecodeError:
+        table_schemas = None
+
+    current_app.extensions["health_table_schemas"] = table_schemas
+    return table_schemas
 
 
 @bp.get("/settings")
@@ -174,6 +205,7 @@ def ingest():
     )
 
     stage_status = "error"
+    replace_existing = request.args.get("replace_existing", "true").lower() != "false"
 
     def _progress_callback(processed_count: int):
         nonlocal processed_records
@@ -186,7 +218,13 @@ def ingest():
         )
 
     try:
-        stats = repo.ingest_records(normalized, batch_ts, _progress_callback)
+        stats = repo.ingest_records(
+            normalized,
+            batch_ts,
+            _progress_callback,
+            replace_existing=replace_existing,
+        )
+        repo.remove_duplicate_rows()
         stage_status = "done"
     finally:
         _write_sync_status(
@@ -435,3 +473,408 @@ def _parse_dt(value: Any):
         return dt
 
     return None
+
+
+RANGE_DAYS = {"today": 1, "7d": 7, "14d": 14, "30d": 30}
+
+
+def _stddev(values: List[float]) -> Optional[float]:
+    if len(values) < 2:
+        return None
+    try:
+        return float(pstdev(values))
+    except Exception:
+        return None
+
+
+def _sigma_range(median_value: Optional[float], deviation: Optional[float], factor: int = 2):
+    if median_value is None or deviation is None:
+        return None, None
+    return median_value - factor * deviation, median_value + factor * deviation
+
+
+def _recent_values(values: Iterable[Optional[float]], limit: int = 21) -> List[float]:
+    filtered = [v for v in values if v is not None]
+    if limit <= 0:
+        return filtered
+    return filtered[-limit:]
+
+
+def _sleep_duration_score(hours: Optional[float]) -> Optional[int]:
+    if hours is None:
+        return None
+    if hours <= 3:
+        return 0
+    if hours >= 8:
+        return 100
+    return round((hours - 3) / 5 * 100)
+
+
+def _previous_sleep_average(
+    baseline: List[Dict[str, Any]], today_str: Optional[str], days: int = 3
+) -> Optional[float]:
+    if today_str is None:
+        return None
+    try:
+        today = date.fromisoformat(str(today_str))
+    except (TypeError, ValueError):
+        return None
+
+    entries: List[tuple[date, float]] = []
+    for row in baseline:
+        raw_date = row.get("date")
+        sleep_total = row.get("sleep_total")
+        if sleep_total is None or raw_date is None:
+            continue
+        try:
+            entry_date = date.fromisoformat(str(raw_date))
+        except ValueError:
+            continue
+        if entry_date < today:
+            entries.append((entry_date, sleep_total))
+
+    entries.sort(key=lambda pair: pair[0], reverse=True)
+    values = [sleep for _, sleep in entries[:days]]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _weighted_sleep_score(
+    current_hours: Optional[float], baseline: List[Dict[str, Any]], today_str: Optional[str]
+) -> int:
+    current_score = _sleep_duration_score(current_hours)
+    prev_avg = _previous_sleep_average(baseline, today_str)
+    prev_score = _sleep_duration_score(prev_avg)
+
+    weighted_scores: List[tuple[int, float]] = []
+    if current_score is not None:
+        weighted_scores.append((current_score, 0.66))
+    if prev_score is not None:
+        weighted_scores.append((prev_score, 0.33))
+
+    if not weighted_scores:
+        return 0
+
+    total_weight = sum(weight for _, weight in weighted_scores)
+    combined = sum(score * weight for score, weight in weighted_scores)
+    return round(combined / total_weight)
+
+
+def _hrv_score(value: Optional[float], median_value: Optional[float], deviation: Optional[float]) -> int:
+    if value is None or median_value is None or not deviation:
+        return 0
+
+    z = (value - median_value) / deviation
+    if z >= 2:
+        return 100
+    if z >= 1:
+        return round(90 + (z - 1) * 10)
+    if z >= 0:
+        return round(70 + z * 20)
+    if z >= -1:
+        return round(35 + (z + 1) * 35)
+    if z >= -2:
+        return round((z + 2) * 35)
+    return 0
+
+
+def _rhr_score(value: Optional[float], median_value: Optional[float], deviation: Optional[float]) -> int:
+    if value is None or median_value is None or not deviation:
+        return 0
+
+    z = (value - median_value) / deviation
+    if z >= 2:
+        return 0
+    if z > 0:
+        decay = 1.0
+        numerator = math.exp(-decay * z) - math.exp(-decay * 2)
+        denominator = 1 - math.exp(-decay * 2)
+        return max(0, round(50 * numerator / denominator))
+    if z >= -1:
+        return round(50 + (abs(z) * 50))
+    if z >= -2:
+        # From 100 at -1 sigma down to 40 at -2 sigma
+        return round(100 - (abs(z + 1) * 60))
+    return 40
+
+
+def _steps_score(steps: Optional[float]) -> int:
+    if steps is None or steps <= 0:
+        return 0
+    if steps >= 10000:
+        return 100
+    return round(min(steps / 10000 * 100, 100))
+
+
+def _format_sleep_duration(hours: Optional[float]) -> Optional[str]:
+    if hours is None:
+        return None
+    total_minutes = int(round(hours * 60))
+    h, m = divmod(total_minutes, 60)
+    return f"{h}h {m:02d}m"
+
+
+def _robust_stats(values: List[float]) -> tuple[Optional[float], Optional[float]]:
+    if not values:
+        return None, None
+
+    med = float(median(values))
+    mad = float(median([abs(v - med) for v in values]))
+    if mad == 0:
+        mad = 1e-6
+    return med, mad
+
+
+def _z_score(value: Optional[float], med: Optional[float], mad: Optional[float]) -> float:
+    if value is None or med is None or mad is None:
+        return 0.0
+    return (value - med) / mad
+
+
+def _color_for_score(score: int) -> str:
+    if score >= 70:
+        return "green"
+    if score >= 45:
+        return "yellow"
+    return "red"
+
+
+def _format_delta(value: Optional[float], baseline: Optional[float], unit: str = "") -> str:
+    if value is None or baseline is None:
+        return "Keine Baseline"
+    diff = value - baseline
+    if baseline != 0:
+        pct = diff / baseline * 100
+        return f"{diff:+.1f}{unit} ({pct:+.0f}%)"
+    return f"{diff:+.1f}{unit}"
+
+
+def _latest_entry_with_data(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for entry in reversed(entries):
+        if any(
+            entry.get(key) is not None
+            for key in ("hrv", "rhr", "sleep_total", "steps", "exercise_min")
+        ):
+            return entry
+    return entries[-1] if entries else None
+
+
+def _shift_sleep_date(date_str: str, range_key: str) -> str:
+    return date_str
+
+
+def _load_entry_for_display(
+    current: Optional[Dict[str, Any]],
+    series: List[Dict[str, Any]],
+    baseline: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not current or not current.get("date"):
+        return current
+
+    try:
+        current_date = date.fromisoformat(str(current.get("date")))
+    except (TypeError, ValueError):
+        return current
+
+    if current_date != date.today():
+        return current
+
+    previous_date = (current_date - timedelta(days=1)).isoformat()
+    previous_entry = next((row for row in reversed(series) if row.get("date") == previous_date), None)
+    if previous_entry:
+        return previous_entry
+
+    return next((row for row in reversed(baseline) if row.get("date") == previous_date), current)
+
+
+def _extend_with_previous_day(
+    series: List[Dict[str, Any]], baseline: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    if not series:
+        return series
+
+    first_date_str = series[0].get("date")
+    try:
+        first_date = date.fromisoformat(str(first_date_str))
+    except (TypeError, ValueError):
+        return series
+
+    previous_date = (first_date - timedelta(days=1)).isoformat()
+    previous_entry = next((row for row in baseline if row.get("date") == previous_date), None)
+    if not previous_entry:
+        return series
+
+    return sorted([previous_entry, *series], key=lambda row: row.get("date") or "")
+
+
+def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str, Any]], range_key: str):
+    current = _latest_entry_with_data(series)
+    today = current.get("date") if current else None
+
+    sleep_values = [row["sleep_total"] for row in baseline if row.get("sleep_total") is not None]
+    hrv_values = _recent_values((row.get("hrv") for row in baseline), limit=21)
+    rhr_values = _recent_values((row.get("rhr") for row in baseline), limit=21)
+    resp_values = [row["resp"] for row in baseline if row.get("resp") is not None]
+    steps_values = [row["steps"] for row in baseline if row.get("steps") is not None]
+    exercise_values = [row["exercise_min"] for row in baseline if row.get("exercise_min") is not None]
+
+    sleep_med, sleep_mad = _robust_stats(sleep_values)
+    hrv_med, hrv_mad = _robust_stats(hrv_values)
+    rhr_med, rhr_mad = _robust_stats(rhr_values)
+    resp_med, resp_mad = _robust_stats(resp_values)
+    steps_med, _ = _robust_stats(steps_values)
+    exercise_med, _ = _robust_stats(exercise_values)
+
+    hrv_std = _stddev(hrv_values)
+    rhr_std = _stddev(rhr_values)
+    hrv_low, hrv_high = _sigma_range(hrv_med, hrv_std)
+    rhr_low, rhr_high = _sigma_range(rhr_med, rhr_std)
+
+    z_sleep = _z_score(current.get("sleep_total") if current else None, sleep_med, sleep_mad)
+    z_hrv = _z_score(current.get("hrv") if current else None, hrv_med, hrv_mad)
+    z_rhr = _z_score(current.get("rhr") if current else None, rhr_med, rhr_mad)
+    z_resp = _z_score(current.get("resp") if current else None, resp_med, resp_mad)
+
+    sleep_score = _weighted_sleep_score(
+        current.get("sleep_total") if current else None, baseline, today
+    )
+    hrv_score = _hrv_score(current.get("hrv") if current else None, hrv_med, hrv_std)
+    rhr_score = _rhr_score(current.get("rhr") if current else None, rhr_med, rhr_std)
+    load_entry = _load_entry_for_display(current, series, baseline)
+    load_steps = load_entry.get("steps") if load_entry else None
+    load_exercise_min = load_entry.get("exercise_min") if load_entry else None
+    load_active_kcal = load_entry.get("active_kcal") if load_entry else None
+
+    steps_score = _steps_score(load_steps)
+
+    readiness = round(hrv_score * 0.45 + sleep_score * 0.3 + rhr_score * 0.25)
+    if abs(z_resp) > 1.5:
+        readiness = max(0, readiness - 5)
+
+    readiness_color = _color_for_score(readiness)
+
+    tiles = {
+        "readiness": {
+            "label": "Readiness",
+            "score": readiness,
+            "color": readiness_color,
+            "date": today,
+            "delta_text": _format_delta(current.get("hrv") if current else None, hrv_med, " ms"),
+            "components": {
+                "sleep": sleep_score,
+                "hrv": hrv_score,
+                "rhr": rhr_score,
+            },
+        },
+        "sleep": {
+            "label": "Schlaf",
+            "value": current.get("sleep_total") if current else None,
+            "unit": "h",
+            "display_value": _format_sleep_duration(current.get("sleep_total") if current else None),
+            "delta_text": _format_delta(current.get("sleep_total") if current else None, sleep_med, " h"),
+            "score": sleep_score,
+            "color": _color_for_score(sleep_score),
+        },
+        "hrv": {
+            "label": "HRV",
+            "value": current.get("hrv") if current else None,
+            "unit": "ms",
+            "delta_text": _format_delta(current.get("hrv") if current else None, hrv_med, " ms"),
+            "score": hrv_score,
+            "color": _color_for_score(hrv_score),
+            "baseline": hrv_med,
+            "range_min": hrv_low,
+            "range_max": hrv_high,
+        },
+        "rhr": {
+            "label": "Ruhepuls",
+            "value": current.get("rhr") if current else None,
+            "unit": "bpm",
+            "delta_text": _format_delta(current.get("rhr") if current else None, rhr_med, " bpm"),
+            "score": rhr_score,
+            "color": _color_for_score(rhr_score),
+            "baseline": rhr_med,
+            "range_min": rhr_low,
+            "range_max": rhr_high,
+        },
+        "load": {
+            "label": "Load",
+            "steps": load_steps,
+            "exercise_min": load_exercise_min,
+            "active_kcal": load_active_kcal,
+            "delta_text": _format_delta(load_steps, steps_med, " steps"),
+            "score": steps_score,
+            "color": _color_for_score(steps_score),
+        },
+    }
+
+    signals: List[str] = []
+    if z_hrv <= -1:
+        signals.append("HRV unter Baseline")
+    if z_rhr >= 1:
+        signals.append("Ruhepuls erhöht")
+    if z_sleep <= -1:
+        signals.append("Schlaf kürzer als üblich")
+    if abs(z_resp) >= 1.5:
+        signals.append("Atemfrequenz auffällig")
+
+    extended_resting_and_sleep_series = _extend_with_previous_day(series, baseline)
+
+    series_payload = {
+        "hrv": [{"date": row["date"], "value": row.get("hrv")} for row in series],
+        "rhr": [
+            {"date": row["date"], "value": row.get("rhr")} for row in extended_resting_and_sleep_series
+        ],
+        "sleep_total": [
+            {
+                "date": _shift_sleep_date(row["date"], range_key),
+                "value": row.get("sleep_total"),
+            }
+            for row in extended_resting_and_sleep_series
+        ],
+        "activity": [
+            {
+                "date": row["date"],
+                "steps": row.get("steps"),
+                "exercise_min": row.get("exercise_min"),
+                "active_kcal": row.get("active_kcal"),
+            }
+            for row in series
+        ],
+    }
+
+    return {
+        "range": range_key,
+        "tiles": tiles,
+        "series": series_payload,
+        "signals": signals,
+        "baseline": {
+            "sleep": sleep_med,
+            "hrv": hrv_med,
+            "rhr": rhr_med,
+            "resp": resp_med,
+            "steps": steps_med,
+            "exercise_min": exercise_med,
+        },
+    }
+
+
+@bp.get("/energy-monitor")
+def energy_monitor():
+    range_key = request.args.get("range", "7d").lower()
+    days = RANGE_DAYS.get(range_key, 7)
+
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+
+    repo = _get_repository()
+    if range_key == "today":
+        series = repo.get_hourly_summary(today)
+    else:
+        series = repo.get_daily_summary(start, today)
+    baseline_start = today - timedelta(days=max(30, days) - 1)
+    baseline = repo.get_daily_summary(baseline_start, today)
+
+    payload = _build_energy_payload(series, baseline, range_key)
+    return jsonify(payload)

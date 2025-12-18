@@ -1,15 +1,40 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { GlassCard } from "./core/GlassCard";
 import type { ModuleManifest } from "./core/types";
 import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 import { SettingsPage } from "./settings/SettingsPage";
 
-type View = "today" | "work" | "dashboard" | "settings";
+type View = "today" | "work" | "dashboard" | "health" | "settings";
+
+type HealthSyncStatus = {
+  syncing: boolean;
+  stage?: string;
+};
+
+function parseHealthSyncStatus(value: unknown): HealthSyncStatus {
+  if (!value || typeof value !== "object") {
+    return { syncing: false, stage: undefined };
+  }
+
+  const data = value as {
+    syncing?: boolean;
+    sync_status?: { stage?: string | null } | null;
+  };
+
+  const syncing = Boolean(data.syncing);
+  const stageRaw =
+    data.sync_status && typeof data.sync_status === "object"
+      ? (data.sync_status as { stage?: string | null }).stage
+      : undefined;
+
+  return { syncing, stage: stageRaw ?? undefined };
+}
 
 function App() {
   const [manifests, setManifests] = useState<ModuleManifest[] | null>(null);
   const [view, setView] = useState<View>("today");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [healthStatus, setHealthStatus] = useState<HealthSyncStatus>({ syncing: false });
 
   useEffect(() => {
     fetch("/api/modules")
@@ -21,10 +46,40 @@ function App() {
       });
   }, []);
 
+  const fetchHealthStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/health/status");
+      const data = await response.json();
+      const parsed = parseHealthSyncStatus(data);
+
+      setHealthStatus(parsed.syncing ? parsed : { syncing: false });
+    } catch (err) {
+      console.error("Failed to load health sync status", err);
+      setHealthStatus({ syncing: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHealthStatus();
+  }, [fetchHealthStatus]);
+
+  useEffect(() => {
+    if (!healthStatus.syncing) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      fetchHealthStatus();
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+  }, [fetchHealthStatus, healthStatus.syncing]);
+
   const activeModules = manifests ? matchActiveModules(manifests) : [];
   const todayWidgets = getWidgetsForSlot(activeModules, "today_view");
   const workWidgets = getWidgetsForSlot(activeModules, "work_dashboard");
   const dashboardWidgets = getWidgetsForSlot(activeModules, "dashboard_view");
+  const healthWidgets = getWidgetsForSlot(activeModules, "health_view");
 
   return (
     <div className="app-shell">
@@ -77,6 +132,22 @@ function App() {
                 📊
               </span>
               <span className="nav-label">Dashboard</span>
+            </button>
+            <button
+              className={`nav-item ${view === "health" ? "active" : ""} ${healthStatus.syncing ? "is-syncing" : ""}`.trim()}
+              type="button"
+              onClick={() => setView("health")}
+              aria-label="Health"
+            >
+              <span className="nav-icon" aria-hidden>
+                ❤️
+              </span>
+              <span className="nav-label">Health</span>
+              {healthStatus.syncing && (
+                <span className="nav-status">
+                  Syncing{healthStatus.stage ? ` (${healthStatus.stage})` : ""}
+                </span>
+              )}
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
@@ -220,6 +291,40 @@ function App() {
                   )}
                   {dashboardWidgets.map((mod, i) =>
                     mod.DashboardWidget ? <mod.DashboardWidget key={i} /> : null
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : view === "health" ? (
+            <div className="app-grid">
+              <header className="app-header">
+                <span className="kicker">Health</span>
+                <h1 className="title">Energy Monitor</h1>
+                <p className="subtitle">Verdichtete Tagesmetrik, Readiness-Barometer &amp; Trends.</p>
+              </header>
+              <section className="stack">
+                <div className="section-heading">Energy Monitor</div>
+                <div className="grid-cards">
+                  {manifests === null && (
+                    <GlassCard glow className="loader">
+                      <span className="kicker">Booting</span>
+                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <p className="card-description">
+                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {manifests && healthWidgets.length === 0 && (
+                    <GlassCard>
+                      <div className="kicker">Kein Health-Modul aktiv</div>
+                      <h3 className="card-title">Aktiviere den Energy Monitor</h3>
+                      <p className="card-description">
+                        Nach der Health-Sync erscheint hier die neue Energy Monitor Ansicht.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {healthWidgets.map((mod, i) =>
+                    mod.HealthWidget ? <mod.HealthWidget key={i} /> : null
                   )}
                 </div>
               </section>

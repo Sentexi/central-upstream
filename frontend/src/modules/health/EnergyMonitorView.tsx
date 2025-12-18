@@ -450,12 +450,17 @@ export function EnergyMonitorView() {
 
   const readiness = data?.tiles.readiness.score ?? 0;
   const signals = data?.signals ?? [];
-  const restingHeartRateValue = data?.tiles.rhr.avg ?? data?.tiles.rhr.value;
   const restingHeartRateSeries: MetricPoint[] =
     data?.series.rhr.map((point) => ({
       date: point.date,
       value: point.avg ?? point.value ?? null,
     })) ?? [];
+  const sortedRestingHeartRateSeries = [...restingHeartRateSeries].sort((a, b) => a.date.localeCompare(b.date));
+  const previousRestingHeartRate =
+    sortedRestingHeartRateSeries.length > 1
+      ? sortedRestingHeartRateSeries[sortedRestingHeartRateSeries.length - 2]?.value ?? null
+      : null;
+  const restingHeartRateValue = data?.tiles.rhr.avg ?? data?.tiles.rhr.value ?? previousRestingHeartRate;
 
   return (
     <div className="app-grid">

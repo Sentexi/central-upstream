@@ -175,6 +175,7 @@ def ingest():
     )
 
     stage_status = "error"
+    replace_existing = request.args.get("replace_existing", "true").lower() != "false"
 
     def _progress_callback(processed_count: int):
         nonlocal processed_records
@@ -187,7 +188,12 @@ def ingest():
         )
 
     try:
-        stats = repo.ingest_records(normalized, batch_ts, _progress_callback)
+        stats = repo.ingest_records(
+            normalized,
+            batch_ts,
+            _progress_callback,
+            replace_existing=replace_existing,
+        )
         stage_status = "done"
     finally:
         _write_sync_status(

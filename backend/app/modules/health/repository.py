@@ -127,7 +127,9 @@ class HealthRepository:
         records: List[NormalizedRecord],
         batch_ts: int,
         progress_callback: Optional[Callable[[int], None]] = None,
+        replace_existing: bool = False,
     ):
+        """Persist normalized records, optionally replacing existing rows in range."""
         stats: Dict[str, Dict[str, int]] = {}
         inserted = 0
         skipped = 0
@@ -136,7 +138,30 @@ class HealthRepository:
         table_cache: Dict[str, bool] = {}
         column_cache: Dict[str, set[str]] = {}
 
+        replacement_ranges: Dict[str, Tuple[int, int]] = {}
+        if replace_existing:
+            for record in records:
+                bounds = replacement_ranges.get(record.data_type)
+                if not bounds:
+                    replacement_ranges[record.data_type] = (record.start_ts, record.end_ts)
+                else:
+                    start, end = bounds
+                    replacement_ranges[record.data_type] = (
+                        min(start, record.start_ts),
+                        max(end, record.end_ts),
+                    )
+
         with self._connect() as conn:
+            if replacement_ranges:
+                for data_type, (range_start, range_end) in replacement_ranges.items():
+                    table_name = self._table_name_for_type(data_type)
+                    self._ensure_table(conn, table_name)
+                    table_cache[table_name] = True
+                    conn.execute(
+                        f"DELETE FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
+                        (range_end, range_start),
+                    )
+
             for record in records:
                 table_name = self._table_name_for_type(record.data_type)
                 if table_name not in table_cache:
@@ -144,7 +169,12 @@ class HealthRepository:
                     table_cache[table_name] = True
 
                 was_inserted = self._upsert_record(
-                    conn, table_name, record, batch_ts, column_cache
+                    conn,
+                    table_name,
+                    record,
+                    batch_ts,
+                    column_cache,
+                    skip_overlap_check=replace_existing,
                 )
                 processed += 1
                 if progress_callback:
@@ -170,23 +200,30 @@ class HealthRepository:
         record: NormalizedRecord,
         batch_ts: int,
         column_cache: Optional[Dict[str, set[str]]] = None,
+        skip_overlap_check: bool = False,
     ) -> bool:
-        """Insert or skip a record depending on overlap and batch recency."""
+        """Insert or skip a record depending on overlap and batch recency.
 
-        overlapping = conn.execute(
-            f"SELECT id, batch_ts FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
-            (record.end_ts, record.start_ts),
-        ).fetchall()
+        When ``skip_overlap_check`` is True, caller guarantees stale rows were
+        already removed for the covered interval, so the function always
+        inserts without querying for overlaps.
+        """
 
-        if overlapping:
-            newest_existing = max(row["batch_ts"] for row in overlapping)
-            if newest_existing > batch_ts:
-                return False
-
-            conn.execute(
-                f"DELETE FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
+        if not skip_overlap_check:
+            overlapping = conn.execute(
+                f"SELECT id, batch_ts FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
                 (record.end_ts, record.start_ts),
-            )
+            ).fetchall()
+
+            if overlapping:
+                newest_existing = max(row["batch_ts"] for row in overlapping)
+                if newest_existing > batch_ts:
+                    return False
+
+                conn.execute(
+                    f"DELETE FROM {table_name} WHERE start_ts < ? AND end_ts > ?",
+                    (record.end_ts, record.start_ts),
+                )
 
         payload_columns = self._ensure_payload_columns(
             conn, table_name, record.payload, column_cache

@@ -506,7 +506,7 @@ export function EnergyMonitorView() {
               delta={data.tiles.readiness.delta_text}
               color={data.tiles.readiness.color}
               score={data.tiles.readiness.score}
-              detail="Gewichtet: Schlaf 40%, HRV 35%, RHR 25%"
+              detail="Gewichtet: Schlaf 30%, HRV 45%, RHR 25%"
             />
             <SummaryTile
               title="Schlaf"
@@ -516,6 +516,7 @@ export function EnergyMonitorView() {
               delta={data.tiles.sleep.delta_text}
               color={data.tiles.sleep.color}
               score={data.tiles.sleep.score}
+              detail="66% diese Nacht, 33% letzte 3 Nächte"
             />
             <SummaryTile
               title="HRV"

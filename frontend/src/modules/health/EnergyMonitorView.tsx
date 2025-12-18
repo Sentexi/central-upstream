@@ -546,7 +546,7 @@ export function EnergyMonitorView() {
               unit={data.tiles.load.steps ? "Steps" : "Min"}
               delta={data.tiles.load.delta_text}
               color={data.tiles.load.color}
-              score={readiness}
+              score={data.tiles.load.score}
               detail={`Steps: ${formatValue(data.tiles.load.steps, 0)} · Exercise: ${formatValue(
                 data.tiles.load.exercise_min,
                 0

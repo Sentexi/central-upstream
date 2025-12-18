@@ -285,6 +285,54 @@ class HealthRepository:
             ("last_import_ts", str(batch_ts)),
         )
 
+    def remove_duplicate_rows(self):
+        """Delete duplicated rows that share the same ``start_ts`` and value column.
+
+        Some data sources occasionally submit identical entries multiple times.
+        This routine scans all health tables for the columns ``qty``, ``avg``,
+        and ``totalsleep`` and removes duplicates where ``start_ts`` and the
+        respective column value match, keeping the most recent row (by
+        ``batch_ts`` and ``id``).
+        """
+
+        target_columns = ("qty", "avg", "totalsleep")
+
+        with self._connect() as conn:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'health_%'"
+            ).fetchall()
+
+            for table_row in tables:
+                table_name = table_row["name"] if isinstance(table_row, sqlite3.Row) else table_row[0]
+                existing_columns = set(self._existing_columns(conn, table_name))
+
+                if "start_ts" not in existing_columns:
+                    continue
+
+                for column in target_columns:
+                    if column not in existing_columns:
+                        continue
+
+                    conn.execute(
+                        f"""
+                        DELETE FROM {table_name}
+                        WHERE id IN (
+                            SELECT id FROM (
+                                SELECT id,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY start_ts, {column}
+                                           ORDER BY batch_ts DESC, id DESC
+                                       ) AS rn
+                                FROM {table_name}
+                                WHERE {column} IS NOT NULL
+                            )
+                            WHERE rn > 1
+                        )
+                        """
+                    )
+
+            conn.commit()
+
     def get_last_import_iso(self) -> str | None:
         with self._connect() as conn:
             row = conn.execute(

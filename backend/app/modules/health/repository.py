@@ -21,13 +21,20 @@ class NormalizedRecord:
 
 
 class HealthRepository:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, table_schemas: Optional[Dict[str, List[str]]] = None):
         self.db_path = db_path
         directory = os.path.dirname(self.db_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
         self._ensure_metadata_table()
         self._summary_cache: Dict[Tuple[str, str], List[dict]] = {}
+        self._provided_schemas: Optional[Dict[str, set[str]]] = None
+        if table_schemas:
+            self._provided_schemas = {
+                table: {self._sanitize_column_name(column) for column in columns}
+                for table, columns in table_schemas.items()
+                if isinstance(columns, (list, tuple, set))
+            }
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -93,6 +100,25 @@ class HealthRepository:
         payload: Dict,
         column_cache: Optional[Dict[str, set[str]]] = None,
     ) -> List[str]:
+        provided_schema = (
+            self._provided_schemas.get(table_name)
+            if self._provided_schemas is not None
+            else None
+        )
+        if provided_schema is not None:
+            if column_cache is not None:
+                column_cache[table_name] = provided_schema
+
+            payload_columns: List[str] = []
+            seen: set[str] = set()
+            for key in payload.keys():
+                column = self._sanitize_column_name(str(key))
+                if column in provided_schema and column not in seen:
+                    payload_columns.append(column)
+                    seen.add(column)
+
+            return payload_columns
+
         existing = set()
         if column_cache is not None and table_name in column_cache:
             existing = column_cache[table_name]

@@ -90,9 +90,38 @@ def _get_repository() -> HealthRepository:
         return repo
 
     db_path = _get_db_path()
-    repo = HealthRepository(db_path)
+    table_schemas = _load_table_schemas()
+    repo = HealthRepository(db_path, table_schemas=table_schemas)
     current_app.extensions["health_repo"] = repo
     return repo
+
+
+def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
+    cached = current_app.extensions.get("health_table_schemas")  # type: ignore[attr-defined]
+    if cached is not None:
+        return cached
+
+    schema_path = current_app.config.get("HEALTH_DB_SCHEMA_PATH")
+    if not schema_path:
+        return None
+
+    table_schemas: Optional[Dict[str, set[str]]] = None
+    try:
+        with open(schema_path, "r", encoding="utf-8") as schema_file:
+            loaded = json.load(schema_file)
+            if isinstance(loaded, dict):
+                table_schemas = {
+                    str(table_name): {str(column_name) for column_name in columns}
+                    for table_name, columns in loaded.items()
+                    if isinstance(columns, list)
+                }
+    except FileNotFoundError:
+        table_schemas = None
+    except json.JSONDecodeError:
+        table_schemas = None
+
+    current_app.extensions["health_table_schemas"] = table_schemas
+    return table_schemas
 
 
 @bp.get("/settings")

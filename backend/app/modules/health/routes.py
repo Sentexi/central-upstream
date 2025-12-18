@@ -563,15 +563,7 @@ def _latest_entry_with_data(entries: List[Dict[str, Any]]) -> Optional[Dict[str,
 
 
 def _shift_sleep_date(date_str: str, range_key: str) -> str:
-    if range_key == "today":
-        return date_str
-
-    try:
-        day = datetime.fromisoformat(date_str).date()
-    except ValueError:
-        return date_str
-
-    return (day - timedelta(days=1)).isoformat()
+    return date_str
 
 
 def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str, Any]], range_key: str):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import date, datetime, timedelta, timezone
 from statistics import median, pstdev
@@ -499,6 +500,113 @@ def _recent_values(values: Iterable[Optional[float]], limit: int = 21) -> List[f
     return filtered[-limit:]
 
 
+def _sleep_duration_score(hours: Optional[float]) -> Optional[int]:
+    if hours is None:
+        return None
+    if hours <= 3:
+        return 0
+    if hours >= 8:
+        return 100
+    return round((hours - 3) / 5 * 100)
+
+
+def _previous_sleep_average(
+    baseline: List[Dict[str, Any]], today_str: Optional[str], days: int = 3
+) -> Optional[float]:
+    if today_str is None:
+        return None
+    try:
+        today = date.fromisoformat(str(today_str))
+    except (TypeError, ValueError):
+        return None
+
+    entries: List[tuple[date, float]] = []
+    for row in baseline:
+        raw_date = row.get("date")
+        sleep_total = row.get("sleep_total")
+        if sleep_total is None or raw_date is None:
+            continue
+        try:
+            entry_date = date.fromisoformat(str(raw_date))
+        except ValueError:
+            continue
+        if entry_date < today:
+            entries.append((entry_date, sleep_total))
+
+    entries.sort(key=lambda pair: pair[0], reverse=True)
+    values = [sleep for _, sleep in entries[:days]]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _weighted_sleep_score(
+    current_hours: Optional[float], baseline: List[Dict[str, Any]], today_str: Optional[str]
+) -> int:
+    current_score = _sleep_duration_score(current_hours)
+    prev_avg = _previous_sleep_average(baseline, today_str)
+    prev_score = _sleep_duration_score(prev_avg)
+
+    weighted_scores: List[tuple[int, float]] = []
+    if current_score is not None:
+        weighted_scores.append((current_score, 0.66))
+    if prev_score is not None:
+        weighted_scores.append((prev_score, 0.33))
+
+    if not weighted_scores:
+        return 0
+
+    total_weight = sum(weight for _, weight in weighted_scores)
+    combined = sum(score * weight for score, weight in weighted_scores)
+    return round(combined / total_weight)
+
+
+def _hrv_score(value: Optional[float], median_value: Optional[float], deviation: Optional[float]) -> int:
+    if value is None or median_value is None or not deviation:
+        return 0
+
+    z = (value - median_value) / deviation
+    if z >= 2:
+        return 100
+    if z >= 1:
+        return round(90 + (z - 1) * 10)
+    if z >= 0:
+        return round(70 + z * 20)
+    if z >= -1:
+        return round(35 + (z + 1) * 35)
+    if z >= -2:
+        return round((z + 2) * 35)
+    return 0
+
+
+def _rhr_score(value: Optional[float], median_value: Optional[float], deviation: Optional[float]) -> int:
+    if value is None or median_value is None or not deviation:
+        return 0
+
+    z = (value - median_value) / deviation
+    if z >= 2:
+        return 0
+    if z > 0:
+        decay = 1.0
+        numerator = math.exp(-decay * z) - math.exp(-decay * 2)
+        denominator = 1 - math.exp(-decay * 2)
+        return max(0, round(50 * numerator / denominator))
+    if z >= -1:
+        return round(50 + (abs(z) * 50))
+    if z >= -2:
+        # From 100 at -1 sigma down to 40 at -2 sigma
+        return round(100 - (abs(z + 1) * 60))
+    return 40
+
+
+def _steps_score(steps: Optional[float]) -> int:
+    if steps is None or steps <= 0:
+        return 0
+    if steps >= 10000:
+        return 100
+    return round(min(steps / 10000 * 100, 100))
+
+
 def _format_sleep_duration(hours: Optional[float]) -> Optional[str]:
     if hours is None:
         return None
@@ -522,16 +630,6 @@ def _z_score(value: Optional[float], med: Optional[float], mad: Optional[float])
     if value is None or med is None or mad is None:
         return 0.0
     return (value - med) / mad
-
-
-def _score_positive(z: float) -> int:
-    clamped = max(min(z, 2.5), -2.5)
-    normalized = (clamped + 2.5) / 5
-    return round(normalized * 100)
-
-
-def _score_negative(z: float) -> int:
-    return _score_positive(-z)
 
 
 def _color_for_score(score: int) -> str:
@@ -614,11 +712,14 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     z_rhr = _z_score(current.get("rhr") if current else None, rhr_med, rhr_mad)
     z_resp = _z_score(current.get("resp") if current else None, resp_med, resp_mad)
 
-    sleep_score = _score_positive(z_sleep)
-    hrv_score = _score_positive(z_hrv)
-    rhr_score = _score_negative(z_rhr)
+    sleep_score = _weighted_sleep_score(
+        current.get("sleep_total") if current else None, baseline, today
+    )
+    hrv_score = _hrv_score(current.get("hrv") if current else None, hrv_med, hrv_std)
+    rhr_score = _rhr_score(current.get("rhr") if current else None, rhr_med, rhr_std)
+    steps_score = _steps_score(current.get("steps") if current else None)
 
-    readiness = round(sleep_score * 0.4 + hrv_score * 0.35 + rhr_score * 0.25)
+    readiness = round(hrv_score * 0.45 + sleep_score * 0.3 + rhr_score * 0.25)
     if abs(z_resp) > 1.5:
         readiness = max(0, readiness - 5)
 
@@ -676,8 +777,8 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
             "delta_text": _format_delta(
                 current.get("steps") if current else None, steps_med, " steps"
             ),
-            "score": readiness,
-            "color": readiness_color,
+            "score": steps_score,
+            "color": _color_for_score(steps_score),
         },
     }
 

@@ -19,6 +19,10 @@ export interface TileData {
   delta_text?: string;
   color?: string;
   score?: number;
+  display_value?: string;
+  baseline?: number | null;
+  range_min?: number | null;
+  range_max?: number | null;
   components?: Record<string, number>;
   steps?: number | null;
   exercise_min?: number | null;

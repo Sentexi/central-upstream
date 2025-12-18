@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
-from statistics import median
+from statistics import median, pstdev
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
@@ -476,6 +476,36 @@ def _parse_dt(value: Any):
 RANGE_DAYS = {"today": 1, "7d": 7, "14d": 14, "30d": 30}
 
 
+def _stddev(values: List[float]) -> Optional[float]:
+    if len(values) < 2:
+        return None
+    try:
+        return float(pstdev(values))
+    except Exception:
+        return None
+
+
+def _sigma_range(median_value: Optional[float], deviation: Optional[float], factor: int = 2):
+    if median_value is None or deviation is None:
+        return None, None
+    return median_value - factor * deviation, median_value + factor * deviation
+
+
+def _recent_values(values: Iterable[Optional[float]], limit: int = 21) -> List[float]:
+    filtered = [v for v in values if v is not None]
+    if limit <= 0:
+        return filtered
+    return filtered[-limit:]
+
+
+def _format_sleep_duration(hours: Optional[float]) -> Optional[str]:
+    if hours is None:
+        return None
+    total_minutes = int(round(hours * 60))
+    h, m = divmod(total_minutes, 60)
+    return f"{h}h {m:02d}m"
+
+
 def _robust_stats(values: List[float]) -> tuple[Optional[float], Optional[float]]:
     if not values:
         return None, None
@@ -536,8 +566,8 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     today = current.get("date") if current else None
 
     sleep_values = [row["sleep_total"] for row in baseline if row.get("sleep_total") is not None]
-    hrv_values = [row["hrv"] for row in baseline if row.get("hrv") is not None]
-    rhr_values = [row["rhr"] for row in baseline if row.get("rhr") is not None]
+    hrv_values = _recent_values((row.get("hrv") for row in baseline), limit=21)
+    rhr_values = _recent_values((row.get("rhr") for row in baseline), limit=21)
     resp_values = [row["resp"] for row in baseline if row.get("resp") is not None]
     steps_values = [row["steps"] for row in baseline if row.get("steps") is not None]
     exercise_values = [row["exercise_min"] for row in baseline if row.get("exercise_min") is not None]
@@ -548,6 +578,11 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     resp_med, resp_mad = _robust_stats(resp_values)
     steps_med, _ = _robust_stats(steps_values)
     exercise_med, _ = _robust_stats(exercise_values)
+
+    hrv_std = _stddev(hrv_values)
+    rhr_std = _stddev(rhr_values)
+    hrv_low, hrv_high = _sigma_range(hrv_med, hrv_std)
+    rhr_low, rhr_high = _sigma_range(rhr_med, rhr_std)
 
     z_sleep = _z_score(current.get("sleep_total") if current else None, sleep_med, sleep_mad)
     z_hrv = _z_score(current.get("hrv") if current else None, hrv_med, hrv_mad)
@@ -580,8 +615,9 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
         "sleep": {
             "label": "Schlaf",
             "value": current.get("sleep_total") if current else None,
-            "unit": "min",
-            "delta_text": _format_delta(current.get("sleep_total") if current else None, sleep_med, " min"),
+            "unit": "h",
+            "display_value": _format_sleep_duration(current.get("sleep_total") if current else None),
+            "delta_text": _format_delta(current.get("sleep_total") if current else None, sleep_med, " h"),
             "score": sleep_score,
             "color": _color_for_score(sleep_score),
         },
@@ -592,6 +628,9 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
             "delta_text": _format_delta(current.get("hrv") if current else None, hrv_med, " ms"),
             "score": hrv_score,
             "color": _color_for_score(hrv_score),
+            "baseline": hrv_med,
+            "range_min": hrv_low,
+            "range_max": hrv_high,
         },
         "rhr": {
             "label": "Ruhepuls",
@@ -600,6 +639,9 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
             "delta_text": _format_delta(current.get("rhr") if current else None, rhr_med, " bpm"),
             "score": rhr_score,
             "color": _color_for_score(rhr_score),
+            "baseline": rhr_med,
+            "range_min": rhr_low,
+            "range_max": rhr_high,
         },
         "load": {
             "label": "Load",

@@ -450,6 +450,12 @@ export function EnergyMonitorView() {
 
   const readiness = data?.tiles.readiness.score ?? 0;
   const signals = data?.signals ?? [];
+  const restingHeartRateValue = data?.tiles.rhr.avg ?? data?.tiles.rhr.value;
+  const restingHeartRateSeries: MetricPoint[] =
+    data?.series.rhr.map((point) => ({
+      date: point.date,
+      value: point.avg ?? point.value ?? null,
+    })) ?? [];
 
   return (
     <div className="app-grid">
@@ -519,7 +525,7 @@ export function EnergyMonitorView() {
             />
             <SummaryTile
               title="Ruhepuls"
-              value={data.tiles.rhr.value}
+              value={restingHeartRateValue}
               unit={data.tiles.rhr.unit}
               delta={data.tiles.rhr.delta_text}
               color={data.tiles.rhr.color}
@@ -549,7 +555,7 @@ export function EnergyMonitorView() {
           <div className="section-heading">Trends</div>
           <div className="grid-cards charts-grid">
             <LineChart data={data.series.hrv} title="HRV" color="#67e8f9" unit="ms" />
-            <LineChart data={data.series.rhr} title="Ruhepuls" color="#a855f7" unit="bpm" />
+            <LineChart data={restingHeartRateSeries} title="Ruhepuls" color="#a855f7" unit="bpm" />
             <LineChart data={data.series.sleep_total} title="Schlafdauer" color="#38bdf8" unit="min" />
             <ActivityChart data={data.series.activity} />
           </div>

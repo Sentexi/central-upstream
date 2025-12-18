@@ -3,6 +3,7 @@ export type RangeKey = "today" | "7d" | "14d" | "30d";
 export interface MetricPoint {
   date: string;
   value: number | null;
+  avg?: number | null;
 }
 
 export interface ActivityPoint {
@@ -15,6 +16,7 @@ export interface ActivityPoint {
 export interface TileData {
   label: string;
   value?: number | null;
+  avg?: number | null;
   unit?: string;
   delta_text?: string;
   color?: string;

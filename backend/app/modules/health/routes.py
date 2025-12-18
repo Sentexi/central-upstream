@@ -664,6 +664,30 @@ def _shift_sleep_date(date_str: str, range_key: str) -> str:
     return date_str
 
 
+def _load_entry_for_display(
+    current: Optional[Dict[str, Any]],
+    series: List[Dict[str, Any]],
+    baseline: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not current or not current.get("date"):
+        return current
+
+    try:
+        current_date = date.fromisoformat(str(current.get("date")))
+    except (TypeError, ValueError):
+        return current
+
+    if current_date != date.today():
+        return current
+
+    previous_date = (current_date - timedelta(days=1)).isoformat()
+    previous_entry = next((row for row in reversed(series) if row.get("date") == previous_date), None)
+    if previous_entry:
+        return previous_entry
+
+    return next((row for row in reversed(baseline) if row.get("date") == previous_date), current)
+
+
 def _extend_with_previous_day(
     series: List[Dict[str, Any]], baseline: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -717,7 +741,12 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     )
     hrv_score = _hrv_score(current.get("hrv") if current else None, hrv_med, hrv_std)
     rhr_score = _rhr_score(current.get("rhr") if current else None, rhr_med, rhr_std)
-    steps_score = _steps_score(current.get("steps") if current else None)
+    load_entry = _load_entry_for_display(current, series, baseline)
+    load_steps = load_entry.get("steps") if load_entry else None
+    load_exercise_min = load_entry.get("exercise_min") if load_entry else None
+    load_active_kcal = load_entry.get("active_kcal") if load_entry else None
+
+    steps_score = _steps_score(load_steps)
 
     readiness = round(hrv_score * 0.45 + sleep_score * 0.3 + rhr_score * 0.25)
     if abs(z_resp) > 1.5:
@@ -771,12 +800,10 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
         },
         "load": {
             "label": "Load",
-            "steps": current.get("steps") if current else None,
-            "exercise_min": current.get("exercise_min") if current else None,
-            "active_kcal": current.get("active_kcal") if current else None,
-            "delta_text": _format_delta(
-                current.get("steps") if current else None, steps_med, " steps"
-            ),
+            "steps": load_steps,
+            "exercise_min": load_exercise_min,
+            "active_kcal": load_active_kcal,
+            "delta_text": _format_delta(load_steps, steps_med, " steps"),
             "score": steps_score,
             "color": _color_for_score(steps_score),
         },

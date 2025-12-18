@@ -187,22 +187,25 @@ function LineChart({
   color: string;
   unit?: string;
 }) {
-  const filtered = data.map((d) => d.value).filter((v) => v !== null) as number[];
+  const sortedData = [...data].sort((a, b) => a.date.localeCompare(b.date));
+
+  const filtered = sortedData.map((d) => d.value).filter((v) => v !== null) as number[];
   const min = filtered.length ? Math.min(...filtered) : 0;
   const max = filtered.length ? Math.max(...filtered) : 1;
   const padding = (max - min) * 0.1 + 1;
   const height = 220;
-  const width = Math.max(360, data.length * 36);
+  const width = Math.max(360, sortedData.length * 36);
   const margin = { top: 20, right: 24, bottom: 26, left: 48 };
-  const step = (width - margin.left - margin.right) / Math.max(data.length - 1, 1);
+  const step = (width - margin.left - margin.right) / Math.max(sortedData.length - 1, 1);
 
   const domainMin = min - padding;
   const domainMax = max + padding;
   const yTicks = generateTicks(domainMin, domainMax, 5);
-  const xTickCount = Math.min(5, data.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((data.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: data.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === data.length - 1
+  const xTickCount = Math.min(5, sortedData.length || 1);
+  const xTickStep =
+    xTickCount > 1 ? Math.max(1, Math.floor((sortedData.length - 1) / (xTickCount - 1))) : 1;
+  const xTickIndices = Array.from({ length: sortedData.length }, (_, idx) => idx).filter(
+    (idx) => idx % xTickStep === 0 || idx === sortedData.length - 1
   );
 
   const scaleY = (value: number) => {
@@ -211,7 +214,7 @@ function LineChart({
     return margin.top + (1 - relative) * (height - margin.top - margin.bottom);
   };
 
-  const points = data
+  const points = sortedData
     .map((d, idx) =>
       d.value === null
         ? null
@@ -262,10 +265,10 @@ function LineChart({
           })}
           <path d={path} fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
           {points.map((p) => (
-            <g key={data[p.idx].date}>
+            <g key={sortedData[p.idx].date}>
               <circle cx={p.x} cy={p.y} r={3} fill={color} />
               <title>
-                {data[p.idx].date}: {formatValue(data[p.idx].value)}
+                {sortedData[p.idx].date}: {formatValue(sortedData[p.idx].value)}
                 {unit ? ` ${unit}` : ""}
               </title>
             </g>
@@ -281,10 +284,10 @@ function LineChart({
           {xTickIndices.map((idx) => {
             const x = margin.left + idx * step;
             return (
-              <g key={data[idx].date + idx}>
+              <g key={sortedData[idx].date + idx}>
                 <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
                 <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {data[idx].date}
+                  {sortedData[idx].date}
                 </text>
               </g>
             );

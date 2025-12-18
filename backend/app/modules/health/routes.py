@@ -566,6 +566,26 @@ def _shift_sleep_date(date_str: str, range_key: str) -> str:
     return date_str
 
 
+def _extend_with_previous_day(
+    series: List[Dict[str, Any]], baseline: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    if not series:
+        return series
+
+    first_date_str = series[0].get("date")
+    try:
+        first_date = date.fromisoformat(str(first_date_str))
+    except (TypeError, ValueError):
+        return series
+
+    previous_date = (first_date - timedelta(days=1)).isoformat()
+    previous_entry = next((row for row in baseline if row.get("date") == previous_date), None)
+    if not previous_entry:
+        return series
+
+    return sorted([previous_entry, *series], key=lambda row: row.get("date") or "")
+
+
 def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str, Any]], range_key: str):
     current = _latest_entry_with_data(series)
     today = current.get("date") if current else None
@@ -671,15 +691,19 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     if abs(z_resp) >= 1.5:
         signals.append("Atemfrequenz auffällig")
 
+    extended_resting_and_sleep_series = _extend_with_previous_day(series, baseline)
+
     series_payload = {
         "hrv": [{"date": row["date"], "value": row.get("hrv")} for row in series],
-        "rhr": [{"date": row["date"], "value": row.get("rhr")} for row in series],
+        "rhr": [
+            {"date": row["date"], "value": row.get("rhr")} for row in extended_resting_and_sleep_series
+        ],
         "sleep_total": [
             {
                 "date": _shift_sleep_date(row["date"], range_key),
                 "value": row.get("sleep_total"),
             }
-            for row in series
+            for row in extended_resting_and_sleep_series
         ],
         "activity": [
             {

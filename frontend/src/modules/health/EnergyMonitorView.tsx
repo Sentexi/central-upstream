@@ -218,11 +218,12 @@ function LineChart({
         : {
             x: margin.left + idx * step,
             y: scaleY(d.value),
+            idx,
           }
     )
-    .filter((p): p is { x: number; y: number } => Boolean(p));
+    .filter((p): p is { x: number; y: number; idx: number } => Boolean(p));
 
-  const path = buildPath(points);
+  const path = buildPath(points.map(({ x, y }) => ({ x, y })));
 
   return (
     <GlassCard className="chart-panel">
@@ -260,11 +261,11 @@ function LineChart({
             );
           })}
           <path d={path} fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
-          {points.map((p, idx) => (
-            <g key={idx}>
+          {points.map((p) => (
+            <g key={data[p.idx].date}>
               <circle cx={p.x} cy={p.y} r={3} fill={color} />
               <title>
-                {data[idx].date}: {formatValue(data[idx].value)}
+                {data[p.idx].date}: {formatValue(data[p.idx].value)}
                 {unit ? ` ${unit}` : ""}
               </title>
             </g>

@@ -562,6 +562,18 @@ def _latest_entry_with_data(entries: List[Dict[str, Any]]) -> Optional[Dict[str,
     return entries[-1] if entries else None
 
 
+def _shift_sleep_date(date_str: str, range_key: str) -> str:
+    if range_key == "today":
+        return date_str
+
+    try:
+        day = datetime.fromisoformat(date_str).date()
+    except ValueError:
+        return date_str
+
+    return (day - timedelta(days=1)).isoformat()
+
+
 def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str, Any]], range_key: str):
     current = _latest_entry_with_data(series)
     today = current.get("date") if current else None
@@ -671,7 +683,11 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
         "hrv": [{"date": row["date"], "value": row.get("hrv")} for row in series],
         "rhr": [{"date": row["date"], "value": row.get("rhr")} for row in series],
         "sleep_total": [
-            {"date": row["date"], "value": row.get("sleep_total")} for row in series
+            {
+                "date": _shift_sleep_date(row["date"], range_key),
+                "value": row.get("sleep_total"),
+            }
+            for row in series
         ],
         "activity": [
             {

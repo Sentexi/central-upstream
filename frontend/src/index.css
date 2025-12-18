@@ -939,7 +939,13 @@ body {
 }
 
 .charts-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1024px) {
+  .charts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .tile-header {
@@ -973,6 +979,48 @@ body {
 .tile-detail {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.baseline-bar {
+  display: grid;
+  gap: 6px;
+}
+
+.baseline-bar__track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.baseline-bar__range {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(103, 232, 249, 0.25), rgba(168, 85, 247, 0.25));
+}
+
+.baseline-bar__marker,
+.baseline-bar__value {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 18px;
+  background: #fff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+}
+
+.baseline-bar__value {
+  background: var(--electric-blue);
+  box-shadow: 0 0 0 6px rgba(34, 211, 238, 0.18);
+}
+
+.baseline-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .barometer {

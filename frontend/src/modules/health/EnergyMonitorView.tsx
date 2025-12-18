@@ -15,6 +15,14 @@ function formatValue(value?: number | null, digits = 1) {
   return Number(value).toFixed(digits);
 }
 
+function formatDuration(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "–";
+  const totalMinutes = Math.round(value * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+}
+
 function generateTicks(minValue: number, maxValue: number, count = 4) {
   if (count < 2) return [maxValue];
 
@@ -50,11 +58,60 @@ function Barometer({ color, score }: { color?: string; score?: number }) {
   const safeColor = color ?? "gray";
   const clamped = Math.max(0, Math.min(score ?? 0, 100));
   return (
-    <div className={`barometer barometer--${safeColor}`} aria-label={`Score ${clamped}`}> 
+    <div className={`barometer barometer--${safeColor}`} aria-label={`Score ${clamped}`}>
       <div className="barometer__track">
         <div className="barometer__fill" style={{ width: `${clamped}%` }} />
       </div>
       <span className="barometer__value">{clamped}</span>
+    </div>
+  );
+}
+
+function BaselineBar({
+  value,
+  baseline,
+  min,
+  max,
+  unit,
+}: {
+  value?: number | null;
+  baseline?: number | null;
+  min?: number | null;
+  max?: number | null;
+  unit?: string;
+}) {
+  if (min === undefined || max === undefined || min === null || max === null) return null;
+  if (max <= min) return null;
+
+  const span = max - min;
+  const clamp = (v: number) => Math.min(Math.max(v, min), max);
+  const baselinePct = baseline === undefined || baseline === null ? null : ((clamp(baseline) - min) / span) * 100;
+  const valuePct = value === undefined || value === null ? null : ((clamp(value) - min) / span) * 100;
+
+  return (
+    <div className="baseline-bar" role="presentation">
+      <div className="baseline-bar__track">
+        <div className="baseline-bar__range" />
+        {baselinePct !== null && (
+          <div
+            className="baseline-bar__marker"
+            style={{ left: `${baselinePct}%` }}
+            title={`Baseline ${formatValue(baseline)}`}
+          />
+        )}
+        {valuePct !== null && (
+          <div
+            className="baseline-bar__value"
+            style={{ left: `${valuePct}%` }}
+            title={`Aktuell ${formatValue(value)}${unit ? ` ${unit}` : ""}`}
+          />
+        )}
+      </div>
+      <div className="baseline-bar__labels">
+        <span>Low: {formatValue(min)}</span>
+        <span>Baseline: {baselinePct !== null ? formatValue(baseline) : "–"}</span>
+        <span>High: {formatValue(max)}</span>
+      </div>
     </div>
   );
 }
@@ -67,6 +124,10 @@ function SummaryTile({
   color,
   score,
   detail,
+  displayValue,
+  baseline,
+  rangeMin,
+  rangeMax,
 }: {
   title: string;
   value?: number | null;
@@ -75,7 +136,18 @@ function SummaryTile({
   color?: string;
   score?: number;
   detail?: string;
+  displayValue?: string | null;
+  baseline?: number | null;
+  rangeMin?: number | null;
+  rangeMax?: number | null;
 }) {
+  const hasRange =
+    rangeMin !== undefined &&
+    rangeMax !== undefined &&
+    rangeMin !== null &&
+    rangeMax !== null &&
+    rangeMax > rangeMin;
+
   return (
     <GlassCard className="energy-tile">
       <div className="tile-header">
@@ -84,11 +156,14 @@ function SummaryTile({
       </div>
       <div className="tile-body">
         <div className="tile-value">
-          <span>{formatValue(value)}</span>
+          <span>{displayValue ?? formatValue(value)}</span>
           {unit ? <span className="unit">{unit}</span> : null}
         </div>
         <div className="tile-delta">{delta ?? "–"}</div>
         {detail ? <div className="tile-detail">{detail}</div> : null}
+        {hasRange ? (
+          <BaselineBar value={value} baseline={baseline} min={rangeMin ?? undefined} max={rangeMax ?? undefined} unit={unit} />
+        ) : null}
       </div>
     </GlassCard>
   );
@@ -186,7 +261,13 @@ function LineChart({
           })}
           <path d={path} fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
           {points.map((p, idx) => (
-            <circle key={idx} cx={p.x} cy={p.y} r={3} fill={color} />
+            <g key={idx}>
+              <circle cx={p.x} cy={p.y} r={3} fill={color} />
+              <title>
+                {data[idx].date}: {formatValue(data[idx].value)}
+                {unit ? ` ${unit}` : ""}
+              </title>
+            </g>
           ))}
           <line
             x1={margin.left}
@@ -220,11 +301,12 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
   const maxExercise = Math.max(...exercise, 1);
   const height = 240;
   const width = Math.max(360, data.length * 36);
-  const margin = { top: 20, right: 20, bottom: 26, left: 52 };
+  const margin = { top: 20, right: 56, bottom: 26, left: 52 };
   const stepWidth = (width - margin.left - margin.right) / Math.max(data.length, 1);
   const innerHeight = height - margin.top - margin.bottom - 40;
 
   const yTicks = generateTicks(0, maxSteps, 5);
+  const exerciseTicks = generateTicks(0, maxExercise, 5);
   const xTickCount = Math.min(5, data.length || 1);
   const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((data.length - 1) / (xTickCount - 1))) : 1;
   const xTickIndices = Array.from({ length: data.length }, (_, idx) => idx).filter(
@@ -232,6 +314,7 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
   );
 
   const valueToY = (value: number) => height - margin.bottom - (value / maxSteps) * innerHeight;
+  const exerciseToY = (value: number) => height - margin.bottom - (value / maxExercise) * innerHeight;
 
   return (
     <GlassCard className="chart-panel">
@@ -258,6 +341,17 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
               </g>
             );
           })}
+          {exerciseTicks.map((tick) => {
+            const y = exerciseToY(tick);
+            return (
+              <g key={`ex-${tick}`}>
+                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" opacity={0.15} />
+                <text x={width - margin.right + 6} y={y + 4} className="chart-tick-label" textAnchor="start">
+                  {formatTickLabel(tick)}
+                </text>
+              </g>
+            );
+          })}
           <line
             x1={margin.left}
             x2={width - margin.right}
@@ -268,7 +362,7 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
           <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
           {data.map((d, idx) => {
             const barHeight = ((d.steps ?? 0) / maxSteps) * (height - margin.top - margin.bottom - 40);
-            const exHeight = ((d.exercise_min ?? 0) / maxExercise) * 50;
+            const exHeight = height - margin.bottom - exerciseToY(d.exercise_min ?? 0);
             const x = margin.left + idx * stepWidth + stepWidth * 0.2;
             const barWidth = stepWidth * 0.45;
             return (
@@ -281,7 +375,11 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
                   fill="var(--electric-blue)"
                   opacity={0.5}
                   rx={4}
-                />
+                >
+                  <title>
+                    {d.date}: {formatValue(d.steps, 0)} Steps
+                  </title>
+                </rect>
                 <rect
                   x={x + barWidth + 4}
                   y={height - margin.bottom - exHeight}
@@ -290,10 +388,14 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
                   fill="#22d3ee"
                   opacity={0.8}
                   rx={3}
-                />
+                >
+                  <title>
+                    {d.date}: {formatValue(d.exercise_min, 0)} min Exercise
+                  </title>
+                </rect>
               </g>
-              );
-            })}
+            );
+          })}
           {xTickIndices.map((idx) => {
             const x = margin.left + idx * stepWidth + stepWidth / 2;
             return (
@@ -306,10 +408,10 @@ function ActivityChart({ data }: { data: ActivityPoint[] }) {
             );
           })}
           <text x={margin.left} y={margin.top + 10} className="chart-tick-label" textAnchor="start">
-            Steps
+            Steps (links)
           </text>
-          <text x={margin.left + 80} y={margin.top + 30} className="chart-tick-label" textAnchor="start">
-            Exercise
+          <text x={width - margin.right} y={margin.top + 10} className="chart-tick-label" textAnchor="end">
+            Exercise (rechts)
           </text>
         </svg>
       </div>
@@ -394,7 +496,8 @@ export function EnergyMonitorView() {
             <SummaryTile
               title="Schlaf"
               value={data.tiles.sleep.value}
-              unit={data.tiles.sleep.unit}
+              displayValue={data.tiles.sleep.display_value ?? formatDuration(data.tiles.sleep.value)}
+              unit={data.tiles.sleep.display_value ? undefined : data.tiles.sleep.unit}
               delta={data.tiles.sleep.delta_text}
               color={data.tiles.sleep.color}
               score={data.tiles.sleep.score}
@@ -406,6 +509,9 @@ export function EnergyMonitorView() {
               delta={data.tiles.hrv.delta_text}
               color={data.tiles.hrv.color}
               score={data.tiles.hrv.score}
+              baseline={data.tiles.hrv.baseline}
+              rangeMin={data.tiles.hrv.range_min}
+              rangeMax={data.tiles.hrv.range_max}
             />
             <SummaryTile
               title="Ruhepuls"
@@ -414,6 +520,9 @@ export function EnergyMonitorView() {
               delta={data.tiles.rhr.delta_text}
               color={data.tiles.rhr.color}
               score={data.tiles.rhr.score}
+              baseline={data.tiles.rhr.baseline}
+              rangeMin={data.tiles.rhr.range_min}
+              rangeMax={data.tiles.rhr.range_max}
             />
             <SummaryTile
               title="Load & Movement"

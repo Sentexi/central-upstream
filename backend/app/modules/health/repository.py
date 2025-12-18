@@ -217,6 +217,9 @@ class HealthRepository:
             self._set_last_import(conn, batch_ts)
             conn.commit()
 
+        # Neue Daten machen aggregierte Caches ungültig
+        self._summary_cache.clear()
+
         return {"inserted": inserted, "skipped": skipped, "by_type": stats}
 
     def _upsert_record(
@@ -332,6 +335,9 @@ class HealthRepository:
                     )
 
             conn.commit()
+
+        # Deduplizierung kann aggregierte Abfragen verändern
+        self._summary_cache.clear()
 
     def get_last_import_iso(self) -> str | None:
         with self._connect() as conn:

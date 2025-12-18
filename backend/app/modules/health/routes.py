@@ -223,6 +223,7 @@ def ingest():
             _progress_callback,
             replace_existing=replace_existing,
         )
+        repo.remove_duplicate_rows()
         stage_status = "done"
     finally:
         _write_sync_status(

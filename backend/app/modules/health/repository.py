@@ -463,7 +463,7 @@ class HealthRepository:
                 key = day.isoformat()
                 if key not in buckets:
                     continue
-                buckets[key].add_rhr(self._gather_numeric(row, "avg"))
+                buckets[key].add_rhr(self._gather_numeric(row, "qty"))
 
             resp_rows = self._query_rows_in_range(
                 conn, "health_respiratory_rate", start_ts, end_ts
@@ -551,7 +551,7 @@ class HealthRepository:
                 bucket = buckets.get(hour)
                 if not bucket:
                     continue
-                bucket.add_rhr(self._gather_numeric(row, "avg"))
+                bucket.add_rhr(self._gather_numeric(row, "qty"))
 
             resp_rows = self._query_rows_in_range(
                 conn, "health_respiratory_rate", start_ts, end_ts

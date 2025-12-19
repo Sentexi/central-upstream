@@ -112,6 +112,7 @@ class HealthRepository:
         fitness_tables = [
             "health_apple_exercise_time",
             "health_active_energy",
+            "health_basal_energy_burned",
             "health_step_count",
             "health_walking_running_distance",
             "health_flights_climbed",
@@ -124,6 +125,8 @@ class HealthRepository:
             "health_weight_body_mass",
             "health_body_fat_percentage",
             "health_lean_body_mass",
+            "health_vo2max",
+            "health_vo2_max",
         ]
         for table in fitness_tables:
             if not self._table_exists(conn, table):
@@ -466,6 +469,9 @@ class HealthRepository:
             datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).timestamp()
         )
 
+        def _unit_from_row(row: sqlite3.Row) -> Optional[str]:
+            return _extract_unit(row)
+
         with self._connect() as conn:
             sleep_rows = self._query_rows_in_range(
                 conn, "health_sleep_analysis", start_ts, end_ts
@@ -520,14 +526,16 @@ class HealthRepository:
                     continue
                 buckets[key].add_resp(self._gather_numeric(row, "qty"))
 
-            for table, attr in [
-                ("health_active_energy", "active_kcal"),
-                ("health_basal_energy_burned", "basal_kcal"),
-                ("health_step_count", "steps"),
-                ("health_apple_exercise_time", "exercise_min"),
-                ("health_apple_stand_hour", "stand_hours"),
-                ("health_apple_stand_time", "stand_hours"),
-            ]:
+            sum_tables = [
+                ("health_active_energy", "active_kcal", lambda v, row: _normalize_energy_kcal(v, _unit_from_row(row))),
+                ("health_basal_energy_burned", "basal_kcal", lambda v, row: _normalize_energy_kcal(v, _unit_from_row(row))),
+                ("health_step_count", "steps", lambda v, row: v),
+                ("health_apple_exercise_time", "exercise_min", lambda v, row: v),
+                ("health_apple_stand_hour", "stand_hours", lambda v, row: v),
+                ("health_apple_stand_time", "stand_hours", lambda v, row: v),
+            ]
+
+            for table, attr, converter in sum_tables:
                 rows = self._query_rows_in_range(conn, table, start_ts, end_ts)
                 for row in rows:
                     day = self._extract_row_date(row)
@@ -536,7 +544,9 @@ class HealthRepository:
                     key = day.isoformat()
                     if key not in buckets:
                         continue
-                    buckets[key].add_sum(attr, self._gather_numeric(row, "qty"))
+                    value = self._gather_numeric(row, "qty")
+                    normalized = converter(value, row) if converter else value
+                    buckets[key].add_sum(attr, normalized)
 
         summary = [bucket.as_dict() for _, bucket in sorted(buckets.items())]
         self._summary_cache[cache_key] = summary
@@ -562,17 +572,15 @@ class HealthRepository:
         )
 
         def _unit_from_row(row: sqlite3.Row) -> Optional[str]:
-            if "unit" not in row.keys():
-                return None
-            raw = row["unit"]
-            return str(raw) if raw is not None else None
+            return _extract_unit(row)
 
         with self._connect() as conn:
             self._ensure_fitness_indexes(conn)
 
             sum_tables = [
                 ("health_apple_exercise_time", "exercise_min", lambda v, row: v),
-                ("health_active_energy", "active_kcal", lambda v, row: v),
+                ("health_active_energy", "active_kcal", lambda v, row: _normalize_energy_kcal(v, _unit_from_row(row))),
+                ("health_basal_energy_burned", "basal_kcal", lambda v, row: _normalize_energy_kcal(v, _unit_from_row(row))),
                 ("health_step_count", "steps", lambda v, row: v),
                 ("health_walking_running_distance", "distance_km", lambda v, row: _normalize_distance_km(v, _unit_from_row(row))),
                 ("health_flights_climbed", "floors", lambda v, row: v),
@@ -602,6 +610,8 @@ class HealthRepository:
                 ("health_weight_body_mass", "weight", lambda v, row: v),
                 ("health_body_fat_percentage", "body_fat", lambda v, row: v),
                 ("health_lean_body_mass", "lean_mass", lambda v, row: v),
+                ("health_vo2max", "vo2max", lambda v, row: v),
+                ("health_vo2_max", "vo2max", lambda v, row: v),
             ]
 
             for table, attr, converter in median_tables:
@@ -637,6 +647,7 @@ class HealthRepository:
                     iso_week INTEGER,
                     exercise_min_week REAL,
                     active_kcal_week REAL,
+                    basal_kcal_week REAL,
                     steps_week REAL,
                     distance_km_week REAL,
                     floors_week REAL,
@@ -645,20 +656,34 @@ class HealthRepository:
                     walking_hr_avg_week REAL,
                     stair_up_week REAL,
                     stair_down_week REAL,
+                    weight_week REAL,
+                    vo2max_week REAL,
                     created_at_ts INTEGER NOT NULL
                 )
                 """
             )
+            existing_cols = set(self._existing_columns(conn, "health_weekly_summary"))
+            for column, col_type in [
+                ("basal_kcal_week", "REAL"),
+                ("weight_week", "REAL"),
+                ("vo2max_week", "REAL"),
+            ]:
+                if column not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE health_weekly_summary ADD COLUMN {column} {col_type}")
+                        existing_cols.add(column)
+                    except sqlite3.OperationalError:
+                        pass
             self._ensure_index(conn, "health_weekly_summary", "week_start")
             for row in rows:
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO health_weekly_summary (
                         week_start, week_end, iso_year, iso_week,
-                        exercise_min_week, active_kcal_week, steps_week, distance_km_week, floors_week,
+                        exercise_min_week, active_kcal_week, basal_kcal_week, steps_week, distance_km_week, floors_week,
                         walking_speed_week, step_length_week, walking_hr_avg_week, stair_up_week, stair_down_week,
-                        created_at_ts
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        weight_week, vo2max_week, created_at_ts
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row.get("week_start"),
@@ -667,6 +692,7 @@ class HealthRepository:
                         row.get("iso_week"),
                         row.get("exercise_min_week"),
                         row.get("active_kcal_week"),
+                        row.get("basal_kcal_week"),
                         row.get("steps_week"),
                         row.get("distance_km_week"),
                         row.get("floors_week"),
@@ -675,6 +701,8 @@ class HealthRepository:
                         row.get("walking_hr_avg_week"),
                         row.get("stair_up_week"),
                         row.get("stair_down_week"),
+                        row.get("weight_week"),
+                        row.get("vo2max_week"),
                         now_ts,
                     ),
                 )
@@ -831,6 +859,29 @@ def _median(values: List[float]) -> Optional[float]:
     if not values:
         return None
     return float(median(values))
+
+
+def _extract_unit(row: sqlite3.Row) -> Optional[str]:
+    for key in ("unit", "units"):
+        if key in row.keys():
+            raw = row[key]
+            if raw is not None:
+                return str(raw)
+    return None
+
+
+def _normalize_energy_kcal(value: Optional[float], unit: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    if unit:
+        normalized = unit.lower()
+        if normalized in {"kj", "kilojoule", "kilojoules"}:
+            return value / 4.184
+        if normalized in {"j", "joule", "joules"}:
+            return value / 4184
+        if normalized in {"kcal", "cal", "calorie", "calories"}:
+            return value
+    return value
 
 
 def _normalize_distance_km(value: Optional[float], unit: Optional[str]) -> Optional[float]:
@@ -1031,6 +1082,8 @@ class _FitnessDailyBucket:
         self._exercise_seen = False
         self.active_kcal = 0.0
         self._active_seen = False
+        self.basal_kcal = 0.0
+        self._basal_seen = False
         self.steps = 0.0
         self._steps_seen = False
         self.distance_km = 0.0
@@ -1043,6 +1096,7 @@ class _FitnessDailyBucket:
         self.walking_hr_values: List[float] = []
         self.stair_up_values: List[float] = []
         self.stair_down_values: List[float] = []
+        self.vo2max_values: List[float] = []
 
         self.bmi_values: List[float] = []
         self.weight_values: List[float] = []
@@ -1058,6 +1112,9 @@ class _FitnessDailyBucket:
         elif attr == "active_kcal":
             self.active_kcal += value
             self._active_seen = True
+        elif attr == "basal_kcal":
+            self.basal_kcal += value
+            self._basal_seen = True
         elif attr == "steps":
             self.steps += value
             self._steps_seen = True
@@ -1081,6 +1138,8 @@ class _FitnessDailyBucket:
             self.stair_up_values.append(value)
         elif attr == "stair_down":
             self.stair_down_values.append(value)
+        elif attr == "vo2max":
+            self.vo2max_values.append(value)
         elif attr == "bmi":
             self.bmi_values.append(value)
         elif attr == "weight":
@@ -1095,6 +1154,7 @@ class _FitnessDailyBucket:
             "date": self.day.isoformat(),
             "exercise_min": self.exercise_min if self._exercise_seen else None,
             "active_kcal": self.active_kcal if self._active_seen else None,
+            "basal_kcal": self.basal_kcal if self._basal_seen else None,
             "steps": self.steps if self._steps_seen else None,
             "distance_km": self.distance_km if self._distance_seen else None,
             "floors": self.floors if self._floors_seen else None,
@@ -1103,6 +1163,7 @@ class _FitnessDailyBucket:
             "walking_hr_avg": _median(self.walking_hr_values),
             "stair_up": _median(self.stair_up_values),
             "stair_down": _median(self.stair_down_values),
+            "vo2max": _median(self.vo2max_values),
             "bmi": _median(self.bmi_values),
             "weight": _median(self.weight_values),
             "body_fat": _median(self.body_fat_values),
@@ -1126,15 +1187,19 @@ class _WeeklyFitnessBucket:
         self._distance_seen = False
         self.floors = 0.0
         self._floors_seen = False
+        self.basal_kcal = 0.0
+        self._basal_seen = False
 
         self.walking_speed_values: List[float] = []
         self.step_length_values: List[float] = []
         self.walking_hr_values: List[float] = []
         self.stair_up_values: List[float] = []
         self.stair_down_values: List[float] = []
+        self.weight_values: List[float] = []
+        self.vo2max_values: List[float] = []
 
     def add_day(self, entry: dict):
-        for attr in ("exercise_min", "active_kcal", "steps", "distance_km", "floors"):
+        for attr in ("exercise_min", "active_kcal", "basal_kcal", "steps", "distance_km", "floors"):
             value = entry.get(attr)
             if value is None:
                 continue
@@ -1144,6 +1209,9 @@ class _WeeklyFitnessBucket:
             elif attr == "active_kcal":
                 self.active_kcal += value
                 self._active_seen = True
+            elif attr == "basal_kcal":
+                self.basal_kcal += value
+                self._basal_seen = True
             elif attr == "steps":
                 self.steps += value
                 self._steps_seen = True
@@ -1164,6 +1232,10 @@ class _WeeklyFitnessBucket:
             self.stair_up_values.append(entry["stair_up"])
         if entry.get("stair_down") is not None:
             self.stair_down_values.append(entry["stair_down"])
+        if entry.get("weight") is not None:
+            self.weight_values.append(entry["weight"])
+        if entry.get("vo2max") is not None:
+            self.vo2max_values.append(entry["vo2max"])
 
     def as_dict(self) -> dict:
         return {
@@ -1174,6 +1246,7 @@ class _WeeklyFitnessBucket:
             "week_label": f"{self.iso_year}-W{self.iso_week:02d}",
             "exercise_min_week": self.exercise_min if self._exercise_seen else None,
             "active_kcal_week": self.active_kcal if self._active_seen else None,
+            "basal_kcal_week": self.basal_kcal if self._basal_seen else None,
             "steps_week": self.steps if self._steps_seen else None,
             "distance_km_week": self.distance_km if self._distance_seen else None,
             "floors_week": self.floors if self._floors_seen else None,
@@ -1182,6 +1255,8 @@ class _WeeklyFitnessBucket:
             "walking_hr_avg_week": _median(self.walking_hr_values),
             "stair_up_week": _median(self.stair_up_values),
             "stair_down_week": _median(self.stair_down_values),
+            "weight_week": _median(self.weight_values),
+            "vo2max_week": _median(self.vo2max_values),
         }
 
 

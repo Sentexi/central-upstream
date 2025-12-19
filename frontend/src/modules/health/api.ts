@@ -105,8 +105,10 @@ export interface FitnessDashboardResponse {
     };
     active_floors: {
       active_kcal: FitnessSeries[];
+      resting_kcal: FitnessSeries[];
       floors: FitnessSeries[];
       active_kcal_weekly: FitnessSeries[];
+      resting_kcal_weekly: FitnessSeries[];
       floors_weekly: FitnessSeries[];
     };
     efficiency: {
@@ -114,6 +116,8 @@ export interface FitnessDashboardResponse {
       stair_up: FitnessSeries[];
       stair_down: FitnessSeries[];
     };
+    weight: { daily: FitnessSeries[]; weekly: FitnessSeries[] };
+    vo2max: { daily: FitnessSeries[]; weekly: FitnessSeries[] };
   };
   notes: string[];
 }

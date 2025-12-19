@@ -1095,13 +1095,30 @@ def _build_fitness_payload(
     ]
 
     active_daily = [{"date": row.get("date"), "value": row.get("active_kcal")} for row in daily_series]
+    resting_daily = [{"date": row.get("date"), "value": row.get("basal_kcal")} for row in daily_series]
     floors_daily = [{"date": row.get("date"), "value": row.get("floors")} for row in daily_series]
     active_weekly = [
         {"date": row.get("week_start"), "value": row.get("active_kcal_week"), "label": row.get("week_label")}
         for row in weekly_series
     ]
+    resting_weekly = [
+        {"date": row.get("week_start"), "value": row.get("basal_kcal_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
     floors_weekly = [
         {"date": row.get("week_start"), "value": row.get("floors_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+
+    weight_daily = [{"date": row.get("date"), "value": row.get("weight")} for row in daily_series]
+    weight_weekly = [
+        {"date": row.get("week_start"), "value": row.get("weight_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+
+    vo2_daily = [{"date": row.get("date"), "value": row.get("vo2max")} for row in daily_series]
+    vo2_weekly = [
+        {"date": row.get("week_start"), "value": row.get("vo2max_week"), "label": row.get("week_label")}
         for row in weekly_series
     ]
 
@@ -1128,8 +1145,10 @@ def _build_fitness_payload(
             },
             "active_floors": {
                 "active_kcal": active_daily,
+                "resting_kcal": resting_daily,
                 "floors": floors_daily,
                 "active_kcal_weekly": active_weekly,
+                "resting_kcal_weekly": resting_weekly,
                 "floors_weekly": floors_weekly,
             },
             "efficiency": {
@@ -1137,6 +1156,8 @@ def _build_fitness_payload(
                 "stair_up": stair_up,
                 "stair_down": stair_down,
             },
+            "weight": {"daily": weight_daily, "weekly": weight_weekly},
+            "vo2max": {"daily": vo2_daily, "weekly": vo2_weekly},
         },
         "notes": notes,
     }

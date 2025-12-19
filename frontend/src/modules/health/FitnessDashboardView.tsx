@@ -368,6 +368,7 @@ function EfficiencyChart({
   stairsDown: FitnessSeries[];
 }) {
   const labels = efficiency.map((d) => d.label ?? d.date);
+  const labelIndex = new Map(labels.map((label, idx) => [label, idx]));
   if (efficiency.length === 0) {
     return (
       <GlassCard className="chart-panel">

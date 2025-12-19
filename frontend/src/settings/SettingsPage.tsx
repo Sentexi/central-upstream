@@ -48,7 +48,8 @@ function getInitialValues(
 function renderField(
   field: SettingsField,
   value: unknown,
-  onChange: (value: unknown) => void
+  onChange: (value: unknown) => void,
+  onFileSelect?: (file: File) => void
 ) {
   const isReadOnly = Boolean(field.read_only);
   const commonProps = {
@@ -91,6 +92,23 @@ function renderField(
     );
   }
 
+  if (field.type === "file") {
+    return (
+      <input
+        className="input"
+        type="file"
+        accept={field.accept?.join(",") ?? undefined}
+        onChange={(event) => {
+          const nextFile = event.target.files?.[0];
+          if (!nextFile) return;
+          event.target.value = "";
+          onFileSelect?.(nextFile);
+        }}
+        disabled={isReadOnly}
+      />
+    );
+  }
+
   const inputType = field.type === "password" ? "password" : "text";
 
   return (
@@ -109,8 +127,8 @@ export function SettingsPage() {
   const [values, setValues] = useState<SettingsValueMap>({});
   const [loading, setLoading] = useState(true);
   const [statuses, setStatuses] = useState<StatusMap>({});
-  const [healthUploading, setHealthUploading] = useState(false);
-  const [healthUploadError, setHealthUploadError] = useState<string | null>(null);
+  const [uploadingModule, setUploadingModule] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     async function bootstrap() {
@@ -181,7 +199,10 @@ export function SettingsPage() {
     return String(lookupValue);
   };
 
-  const parseSyncStatus = (value: unknown): StatusProgress => {
+  const parseSyncStatus = (
+    value: unknown,
+    stageLabels?: Record<string, string>
+  ): StatusProgress => {
     if (value === undefined || value === null) {
       return { processed: 0, total: 0, percent: 0, stage: undefined };
     }
@@ -191,7 +212,8 @@ export function SettingsPage() {
       (value as { processed_records?: number }).processed_records ?? 0
     );
     const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    const stage = (value as { stage?: string | null }).stage ?? undefined;
+    const stageKey = (value as { stage?: string | null }).stage ?? undefined;
+    const stage = stageKey ? stageLabels?.[stageKey] ?? stageKey : undefined;
 
     return { processed, total, percent, stage };
   };
@@ -208,7 +230,12 @@ export function SettingsPage() {
             const data = await response.json();
 
             if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
-              const syncStatus = parseSyncStatus((data as { sync_status?: unknown }).sync_status);
+              const stageLabels =
+                module.status?.stage_labels ?? (data as { stages?: Record<string, string> }).stages;
+              const syncStatus = parseSyncStatus(
+                (data as { sync_status?: unknown }).sync_status,
+                stageLabels
+              );
 
               setStatuses((prev) => ({
                 ...prev,
@@ -285,36 +312,65 @@ export function SettingsPage() {
     setStatuses((prev) => ({ ...prev, [moduleId]: { state: status, message } }));
   };
 
-  const handleHealthUpload = async (file: File) => {
-    setHealthUploadError(null);
-    setHealthUploading(true);
-    setStatus("health", "saving", "Import wird vorbereitet...");
+  const handleFileUpload = async (module: SettingsModuleSchema, file: File) => {
+    if (!module.manual_import?.endpoint) return;
+
+    const label = module.manual_import.label ?? module.module_name;
+    setUploadError((prev) => ({ ...prev, [module.module_id]: null }));
+    setUploadingModule(module.module_id);
+    setStatus(module.module_id, "saving", "Import wird vorbereitet...");
 
     try {
-      const text = await file.text();
-      const payload = JSON.parse(text);
+      let body: BodyInit | null = null;
+      let headers: Record<string, string> | undefined;
 
-      const response = await fetch("/api/health/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      if (module.manual_import.upload_kind === "json") {
+        const text = await file.text();
+        try {
+          JSON.parse(text);
+        } catch (err) {
+          throw new Error("Ungültige JSON-Datei");
+        }
+        body = text;
+        headers = { "Content-Type": "application/json" };
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        body = formData;
+      }
+
+      const response = await fetch(module.manual_import.endpoint, {
+        method: (module.manual_import as { method?: string }).method ?? "POST",
+        headers,
+        body,
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        const errorMessage = data?.error ?? "Import fehlgeschlagen";
-        setHealthUploadError(errorMessage);
-        setStatus("health", "error", errorMessage);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || (data && typeof data === "object" && (data as { ok?: boolean }).ok === false)) {
+        const errorMessage =
+          (data as { error?: string }).error ??
+          module.manual_import.error_message ??
+          "Import fehlgeschlagen";
+        setUploadError((prev) => ({ ...prev, [module.module_id]: errorMessage }));
+        setStatus(module.module_id, "error", errorMessage);
         return;
       }
 
-      setStatus("health", "syncing", "Sync wird gestartet...");
+      setStatus(
+        module.module_id,
+        "syncing",
+        module.manual_import.success_message ?? `${label}: Import gestartet`
+      );
     } catch (err) {
-      console.error("Health Upload fehlgeschlagen", err);
-      setHealthUploadError("Ungültige JSON-Datei oder Netzwerkfehler beim Import");
-      setStatus("health", "error", "Upload fehlgeschlagen");
+      console.error("File Upload fehlgeschlagen", err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : module.manual_import?.error_message ?? "Upload fehlgeschlagen";
+      setUploadError((prev) => ({ ...prev, [module.module_id]: errorMessage }));
+      setStatus(module.module_id, "error", errorMessage);
     } finally {
-      setHealthUploading(false);
+      setUploadingModule(null);
     }
   };
 
@@ -460,42 +516,47 @@ export function SettingsPage() {
                       </span>
                       {field.help_text && <span className="muted">{field.help_text}</span>}
                     </div>
-                    {renderField(field, moduleValues[field.key], (val) =>
-                      handleChange(module.module_id, field.key, val)
+                    {renderField(
+                      field,
+                      moduleValues[field.key],
+                      (val) => handleChange(module.module_id, field.key, val),
+                      field.type === "file" ? (file) => handleFileUpload(module, file) : undefined
                     )}
                   </label>
                 ))}
 
-                {module.module_id === "health" && (
+                {module.manual_import && (
                   <div className="manual-import">
                     <div className="settings-field__meta">
-                      <span className="settings-label">Manueller Import</span>
-                      <span className="muted">
-                        Lade einen Health Auto Export als JSON hoch. Die Datei wird direkt
-                        importiert und triggert den Sync-Prozess.
-                      </span>
+                      <span className="settings-label">{module.manual_import.label}</span>
+                      {module.manual_import.help_text && (
+                        <span className="muted">{module.manual_import.help_text}</span>
+                      )}
+                      {module.status?.upload_hint && (
+                        <span className="muted">{module.status.upload_hint}</span>
+                      )}
                     </div>
                     <label className="manual-import__controls">
                       <input
                         type="file"
-                        accept="application/json,.json"
+                        accept={module.manual_import.accept?.join(",") ?? undefined}
                         className="input"
                         onChange={(event) => {
                           const nextFile = event.target.files?.[0];
                           if (!nextFile) return;
                           event.target.value = "";
-                          handleHealthUpload(nextFile);
+                          handleFileUpload(module, nextFile);
                         }}
-                        disabled={healthUploading}
+                        disabled={uploadingModule === module.module_id}
                       />
                       <span className="muted small">
-                        {healthUploading
+                        {uploadingModule === module.module_id
                           ? "Upload & Sync laufen..."
-                          : "Maximal 1 Datei, JSON-Format"}
+                          : "Maximal 1 Datei"}
                       </span>
                     </label>
-                    {healthUploadError && (
-                      <div className="settings-error">{healthUploadError}</div>
+                    {uploadError[module.module_id] && (
+                      <div className="settings-error">{uploadError[module.module_id]}</div>
                     )}
                   </div>
                 )}

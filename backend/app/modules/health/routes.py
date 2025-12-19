@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
 
-from .repository import HealthRepository, NormalizedRecord
+from .repository import HealthRepository, NormalizedRecord, _safe_divide
 
 bp = Blueprint("health", __name__)
 

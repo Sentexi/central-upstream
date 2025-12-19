@@ -196,54 +196,58 @@ export function SettingsPage() {
     return { processed, total, percent, stage };
   };
 
-  const fetchStatuses = useCallback(async () => {
-    const modulesWithStatus = modules.filter((module) => module.status?.endpoint);
+  const fetchStatuses = useCallback(
+    async (options?: { modules?: SettingsModuleSchema[] }) => {
+      const sourceModules = options?.modules ?? modules;
+      const modulesWithStatus = sourceModules.filter((module) => module.status?.endpoint);
 
-    await Promise.all(
-      modulesWithStatus.map(async (module) => {
-        try {
-          const response = await fetch(module.status!.endpoint);
-          const data = await response.json();
+      await Promise.all(
+        modulesWithStatus.map(async (module) => {
+          try {
+            const response = await fetch(module.status!.endpoint);
+            const data = await response.json();
 
-          if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
-            const syncStatus = parseSyncStatus((data as { sync_status?: unknown }).sync_status);
+            if (data && typeof data === "object" && (data as { syncing?: boolean }).syncing) {
+              const syncStatus = parseSyncStatus((data as { sync_status?: unknown }).sync_status);
+
+              setStatuses((prev) => ({
+                ...prev,
+                [module.module_id]: {
+                  state: "syncing",
+                  message: syncStatus.stage
+                    ? `Syncing (${syncStatus.stage})`
+                    : "Syncing läuft...",
+                  progress: syncStatus,
+                },
+              }));
+              return;
+            }
+
+            const messageValue = formatStatusValue(module.status, data);
+            const label = module.status?.label ?? "Status";
 
             setStatuses((prev) => ({
               ...prev,
               [module.module_id]: {
-                state: "syncing",
-                message: syncStatus.stage
-                  ? `Syncing (${syncStatus.stage})`
-                  : "Syncing läuft...",
-                progress: syncStatus,
+                state: "success",
+                message: `${label}: ${messageValue}`,
               },
             }));
-            return;
+          } catch (err) {
+            console.error(`Status für Modul ${module.module_id} konnte nicht geladen werden`, err);
+            setStatuses((prev) => ({
+              ...prev,
+              [module.module_id]: {
+                state: "error",
+                message: "Status konnte nicht geladen werden",
+              },
+            }));
           }
-
-          const messageValue = formatStatusValue(module.status, data);
-          const label = module.status?.label ?? "Status";
-
-          setStatuses((prev) => ({
-            ...prev,
-            [module.module_id]: {
-              state: "success",
-              message: `${label}: ${messageValue}`,
-            },
-          }));
-        } catch (err) {
-          console.error(`Status für Modul ${module.module_id} konnte nicht geladen werden`, err);
-          setStatuses((prev) => ({
-            ...prev,
-            [module.module_id]: {
-              state: "error",
-              message: "Status konnte nicht geladen werden",
-            },
-          }));
-        }
-      })
-    );
-  }, [formatStatusValue, modules]);
+        })
+      );
+    },
+    [formatStatusValue, modules]
+  );
 
   useEffect(() => {
     if (modules.length > 0) {
@@ -252,16 +256,16 @@ export function SettingsPage() {
   }, [fetchStatuses, modules.length]);
 
   useEffect(() => {
-    const hasSyncingModule = modules.some(
+    const syncingModules = modules.filter(
       (module) => statuses[module.module_id]?.state === "syncing"
     );
 
-    if (!hasSyncingModule) {
+    if (syncingModules.length === 0) {
       return undefined;
     }
 
     const interval = window.setInterval(() => {
-      fetchStatuses();
+      fetchStatuses({ modules: syncingModules });
     }, 1500);
 
     return () => window.clearInterval(interval);
@@ -305,7 +309,6 @@ export function SettingsPage() {
       }
 
       setStatus("health", "syncing", "Sync wird gestartet...");
-      fetchStatuses();
     } catch (err) {
       console.error("Health Upload fehlgeschlagen", err);
       setHealthUploadError("Ungültige JSON-Datei oder Netzwerkfehler beim Import");
@@ -370,6 +373,7 @@ export function SettingsPage() {
       }
 
       setStatus(module.module_id, "success", "Verbunden");
+      await fetchStatuses({ modules: [module] });
     } catch (err) {
       console.error("Settings Speichern fehlgeschlagen", err);
       setStatus(module.module_id, "error", "Netzwerkfehler beim Speichern");

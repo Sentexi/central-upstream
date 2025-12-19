@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -28,7 +28,10 @@ class HealthRepository:
             os.makedirs(directory, exist_ok=True)
         self._ensure_metadata_table()
         self._summary_cache: Dict[Tuple[str, str], List[dict]] = {}
+        self._fitness_cache: Dict[Tuple[str, str], List[dict]] = {}
+        self._fitness_weekly_cache: Dict[Tuple[str, str], List[dict]] = {}
         self._provided_schemas: Optional[Dict[str, set[str]]] = None
+        self._indexes_ready: Set[str] = set()
         if table_schemas:
             self._provided_schemas = {
                 table: {self._sanitize_column_name(column) for column in columns}
@@ -92,6 +95,42 @@ class HealthRepository:
             (table_name,),
         )
         return cursor.fetchone() is not None
+
+    def _ensure_index(self, conn: sqlite3.Connection, table_name: str, column: str):
+        key = f"{table_name}:{column}"
+        if key in self._indexes_ready:
+            return
+        try:
+            conn.execute(
+                f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{column} ON {table_name}("{column}")'
+            )
+            self._indexes_ready.add(key)
+        except sqlite3.OperationalError:
+            return
+
+    def _ensure_fitness_indexes(self, conn: sqlite3.Connection):
+        fitness_tables = [
+            "health_apple_exercise_time",
+            "health_active_energy",
+            "health_step_count",
+            "health_walking_running_distance",
+            "health_flights_climbed",
+            "health_walking_speed",
+            "health_walking_step_length",
+            "health_walking_heart_rate_average",
+            "health_stair_speed_up",
+            "health_stair_speed_down",
+            "health_body_mass_index",
+            "health_weight_body_mass",
+            "health_body_fat_percentage",
+            "health_lean_body_mass",
+        ]
+        for table in fitness_tables:
+            if not self._table_exists(conn, table):
+                continue
+            self._ensure_index(conn, table, "start_ts")
+            if "date" in {col.lower() for col in self._existing_columns(conn, table)}:
+                self._ensure_index(conn, table, "date")
 
     def _ensure_payload_columns(
         self,
@@ -219,6 +258,8 @@ class HealthRepository:
 
         # Neue Daten machen aggregierte Caches ungültig
         self._summary_cache.clear()
+        self._fitness_cache.clear()
+        self._fitness_weekly_cache.clear()
 
         return {"inserted": inserted, "skipped": skipped, "by_type": stats}
 
@@ -338,6 +379,8 @@ class HealthRepository:
 
         # Deduplizierung kann aggregierte Abfragen verändern
         self._summary_cache.clear()
+        self._fitness_cache.clear()
+        self._fitness_weekly_cache.clear()
 
     def get_last_import_iso(self) -> str | None:
         with self._connect() as conn:
@@ -499,6 +542,178 @@ class HealthRepository:
         self._summary_cache[cache_key] = summary
         return summary
 
+    def get_fitness_daily_aggregates(self, start: date, end: date) -> List[dict]:
+        if start > end:
+            start, end = end, start
+
+        cache_key = (start.isoformat(), end.isoformat())
+        if cache_key in self._fitness_cache:
+            return self._fitness_cache[cache_key]
+
+        buckets: Dict[str, _FitnessDailyBucket] = {
+            day.isoformat(): _FitnessDailyBucket(day) for day in _date_range(start, end)
+        }
+
+        start_ts = int(
+            datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc).timestamp()
+        )
+        end_ts = int(
+            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).timestamp()
+        )
+
+        def _unit_from_row(row: sqlite3.Row) -> Optional[str]:
+            if "unit" not in row.keys():
+                return None
+            raw = row["unit"]
+            return str(raw) if raw is not None else None
+
+        with self._connect() as conn:
+            self._ensure_fitness_indexes(conn)
+
+            sum_tables = [
+                ("health_apple_exercise_time", "exercise_min", lambda v, row: v),
+                ("health_active_energy", "active_kcal", lambda v, row: v),
+                ("health_step_count", "steps", lambda v, row: v),
+                ("health_walking_running_distance", "distance_km", lambda v, row: _normalize_distance_km(v, _unit_from_row(row))),
+                ("health_flights_climbed", "floors", lambda v, row: v),
+            ]
+
+            for table, attr, converter in sum_tables:
+                rows = self._query_rows_in_range(conn, table, start_ts, end_ts)
+                for row in rows:
+                    day = self._extract_row_date(row)
+                    if not day:
+                        continue
+                    key = day.isoformat()
+                    bucket = buckets.get(key)
+                    if not bucket:
+                        continue
+                    value = self._gather_numeric(row, "qty")
+                    normalized = converter(value, row) if converter else value
+                    bucket.add_sum(attr, normalized)
+
+            median_tables = [
+                ("health_walking_speed", "walking_speed", lambda v, row: _normalize_walking_speed(v, _unit_from_row(row))),
+                ("health_walking_step_length", "step_length", lambda v, row: v),
+                ("health_walking_heart_rate_average", "walking_hr_avg", lambda v, row: v),
+                ("health_stair_speed_up", "stair_up", lambda v, row: v),
+                ("health_stair_speed_down", "stair_down", lambda v, row: v),
+                ("health_body_mass_index", "bmi", lambda v, row: v),
+                ("health_weight_body_mass", "weight", lambda v, row: v),
+                ("health_body_fat_percentage", "body_fat", lambda v, row: v),
+                ("health_lean_body_mass", "lean_mass", lambda v, row: v),
+            ]
+
+            for table, attr, converter in median_tables:
+                rows = self._query_rows_in_range(conn, table, start_ts, end_ts)
+                for row in rows:
+                    day = self._extract_row_date(row)
+                    if not day:
+                        continue
+                    key = day.isoformat()
+                    bucket = buckets.get(key)
+                    if not bucket:
+                        continue
+                    value = self._gather_numeric(row, "qty")
+                    normalized = converter(value, row) if converter else value
+                    bucket.add_value(attr, normalized)
+
+        summary = [bucket.as_dict() for _, bucket in sorted(buckets.items())]
+        self._fitness_cache[cache_key] = summary
+        return summary
+
+    def _persist_weekly_summary(self, rows: List[dict]):
+        if not rows:
+            return
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS health_weekly_summary (
+                    week_start TEXT PRIMARY KEY,
+                    week_end TEXT NOT NULL,
+                    iso_year INTEGER,
+                    iso_week INTEGER,
+                    exercise_min_week REAL,
+                    active_kcal_week REAL,
+                    steps_week REAL,
+                    distance_km_week REAL,
+                    floors_week REAL,
+                    walking_speed_week REAL,
+                    step_length_week REAL,
+                    walking_hr_avg_week REAL,
+                    stair_up_week REAL,
+                    stair_down_week REAL,
+                    created_at_ts INTEGER NOT NULL
+                )
+                """
+            )
+            self._ensure_index(conn, "health_weekly_summary", "week_start")
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO health_weekly_summary (
+                        week_start, week_end, iso_year, iso_week,
+                        exercise_min_week, active_kcal_week, steps_week, distance_km_week, floors_week,
+                        walking_speed_week, step_length_week, walking_hr_avg_week, stair_up_week, stair_down_week,
+                        created_at_ts
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row.get("week_start"),
+                        row.get("week_end"),
+                        row.get("iso_year"),
+                        row.get("iso_week"),
+                        row.get("exercise_min_week"),
+                        row.get("active_kcal_week"),
+                        row.get("steps_week"),
+                        row.get("distance_km_week"),
+                        row.get("floors_week"),
+                        row.get("walking_speed_week"),
+                        row.get("step_length_week"),
+                        row.get("walking_hr_avg_week"),
+                        row.get("stair_up_week"),
+                        row.get("stair_down_week"),
+                        now_ts,
+                    ),
+                )
+            conn.commit()
+
+    def get_fitness_weekly_summary(self, start: date, end: date) -> List[dict]:
+        if start > end:
+            start, end = end, start
+
+        cache_key = (start.isoformat(), end.isoformat())
+        if cache_key in self._fitness_weekly_cache:
+            return self._fitness_weekly_cache[cache_key]
+
+        daily = self.get_fitness_daily_aggregates(start, end)
+        buckets: Dict[str, _WeeklyFitnessBucket] = {}
+
+        for entry in daily:
+            raw_date = entry.get("date")
+            if not raw_date:
+                continue
+            try:
+                day = date.fromisoformat(str(raw_date))
+            except ValueError:
+                continue
+            iso_year, iso_week, iso_weekday = day.isocalendar()
+            week_start = day - timedelta(days=iso_weekday - 1)
+            week_end = week_start + timedelta(days=6)
+            key = week_start.isoformat()
+            bucket = buckets.get(key)
+            if not bucket:
+                bucket = _WeeklyFitnessBucket(week_start, week_end, iso_year, iso_week)
+                buckets[key] = bucket
+            bucket.add_day(entry)
+
+        weekly = [bucket.as_dict() for _, bucket in sorted(buckets.items())]
+        self._fitness_weekly_cache[cache_key] = weekly
+        self._persist_weekly_summary(weekly)
+        return weekly
+
     def get_hourly_summary(self, day: date) -> List[dict]:
         """Return intraday aggregates grouped by hour for a given day."""
 
@@ -616,6 +831,37 @@ def _median(values: List[float]) -> Optional[float]:
     if not values:
         return None
     return float(median(values))
+
+
+def _normalize_distance_km(value: Optional[float], unit: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    if unit:
+        normalized = unit.lower()
+        if normalized in {"km", "kilometer", "kilometre"}:
+            return value
+        if normalized in {"mi", "mile", "miles"}:
+            return value * 1.60934
+    # Default assumption: meter
+    return value / 1000
+
+
+def _normalize_walking_speed(value: Optional[float], unit: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    if unit:
+        normalized = unit.lower()
+        if normalized in {"km/h", "kph"}:
+            return value
+        if normalized in {"m/s", "meter/second", "metre/second"}:
+            return value * 3.6
+    return value
+
+
+def _safe_divide(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return numerator / denominator
 
 
 class _DailyBucket:
@@ -775,6 +1021,167 @@ class _HourlyBucket:
             "steps": self.steps if self.steps else None,
             "exercise_min": self.exercise_min if self.exercise_min else None,
             "stand_hours": self.stand_hours if self._stand_seen else None,
+        }
+
+
+class _FitnessDailyBucket:
+    def __init__(self, day: date):
+        self.day = day
+        self.exercise_min = 0.0
+        self._exercise_seen = False
+        self.active_kcal = 0.0
+        self._active_seen = False
+        self.steps = 0.0
+        self._steps_seen = False
+        self.distance_km = 0.0
+        self._distance_seen = False
+        self.floors = 0.0
+        self._floors_seen = False
+
+        self.walking_speed_values: List[float] = []
+        self.step_length_values: List[float] = []
+        self.walking_hr_values: List[float] = []
+        self.stair_up_values: List[float] = []
+        self.stair_down_values: List[float] = []
+
+        self.bmi_values: List[float] = []
+        self.weight_values: List[float] = []
+        self.body_fat_values: List[float] = []
+        self.lean_mass_values: List[float] = []
+
+    def add_sum(self, attr: str, value: Optional[float]):
+        if value is None:
+            return
+        if attr == "exercise_min":
+            self.exercise_min += value
+            self._exercise_seen = True
+        elif attr == "active_kcal":
+            self.active_kcal += value
+            self._active_seen = True
+        elif attr == "steps":
+            self.steps += value
+            self._steps_seen = True
+        elif attr == "distance_km":
+            self.distance_km += value
+            self._distance_seen = True
+        elif attr == "floors":
+            self.floors += value
+            self._floors_seen = True
+
+    def add_value(self, attr: str, value: Optional[float]):
+        if value is None:
+            return
+        if attr == "walking_speed":
+            self.walking_speed_values.append(value)
+        elif attr == "step_length":
+            self.step_length_values.append(value)
+        elif attr == "walking_hr_avg":
+            self.walking_hr_values.append(value)
+        elif attr == "stair_up":
+            self.stair_up_values.append(value)
+        elif attr == "stair_down":
+            self.stair_down_values.append(value)
+        elif attr == "bmi":
+            self.bmi_values.append(value)
+        elif attr == "weight":
+            self.weight_values.append(value)
+        elif attr == "body_fat":
+            self.body_fat_values.append(value)
+        elif attr == "lean_mass":
+            self.lean_mass_values.append(value)
+
+    def as_dict(self) -> dict:
+        return {
+            "date": self.day.isoformat(),
+            "exercise_min": self.exercise_min if self._exercise_seen else None,
+            "active_kcal": self.active_kcal if self._active_seen else None,
+            "steps": self.steps if self._steps_seen else None,
+            "distance_km": self.distance_km if self._distance_seen else None,
+            "floors": self.floors if self._floors_seen else None,
+            "walking_speed": _median(self.walking_speed_values),
+            "step_length": _median(self.step_length_values),
+            "walking_hr_avg": _median(self.walking_hr_values),
+            "stair_up": _median(self.stair_up_values),
+            "stair_down": _median(self.stair_down_values),
+            "bmi": _median(self.bmi_values),
+            "weight": _median(self.weight_values),
+            "body_fat": _median(self.body_fat_values),
+            "lean_mass": _median(self.lean_mass_values),
+        }
+
+
+class _WeeklyFitnessBucket:
+    def __init__(self, week_start: date, week_end: date, iso_year: int, iso_week: int):
+        self.week_start = week_start
+        self.week_end = week_end
+        self.iso_year = iso_year
+        self.iso_week = iso_week
+        self.exercise_min = 0.0
+        self._exercise_seen = False
+        self.active_kcal = 0.0
+        self._active_seen = False
+        self.steps = 0.0
+        self._steps_seen = False
+        self.distance_km = 0.0
+        self._distance_seen = False
+        self.floors = 0.0
+        self._floors_seen = False
+
+        self.walking_speed_values: List[float] = []
+        self.step_length_values: List[float] = []
+        self.walking_hr_values: List[float] = []
+        self.stair_up_values: List[float] = []
+        self.stair_down_values: List[float] = []
+
+    def add_day(self, entry: dict):
+        for attr in ("exercise_min", "active_kcal", "steps", "distance_km", "floors"):
+            value = entry.get(attr)
+            if value is None:
+                continue
+            if attr == "exercise_min":
+                self.exercise_min += value
+                self._exercise_seen = True
+            elif attr == "active_kcal":
+                self.active_kcal += value
+                self._active_seen = True
+            elif attr == "steps":
+                self.steps += value
+                self._steps_seen = True
+            elif attr == "distance_km":
+                self.distance_km += value
+                self._distance_seen = True
+            elif attr == "floors":
+                self.floors += value
+                self._floors_seen = True
+
+        if entry.get("walking_speed") is not None:
+            self.walking_speed_values.append(entry["walking_speed"])
+        if entry.get("step_length") is not None:
+            self.step_length_values.append(entry["step_length"])
+        if entry.get("walking_hr_avg") is not None:
+            self.walking_hr_values.append(entry["walking_hr_avg"])
+        if entry.get("stair_up") is not None:
+            self.stair_up_values.append(entry["stair_up"])
+        if entry.get("stair_down") is not None:
+            self.stair_down_values.append(entry["stair_down"])
+
+    def as_dict(self) -> dict:
+        return {
+            "week_start": self.week_start.isoformat(),
+            "week_end": self.week_end.isoformat(),
+            "iso_year": self.iso_year,
+            "iso_week": self.iso_week,
+            "week_label": f"{self.iso_year}-W{self.iso_week:02d}",
+            "exercise_min_week": self.exercise_min if self._exercise_seen else None,
+            "active_kcal_week": self.active_kcal if self._active_seen else None,
+            "steps_week": self.steps if self._steps_seen else None,
+            "distance_km_week": self.distance_km if self._distance_seen else None,
+            "floors_week": self.floors if self._floors_seen else None,
+            "walking_speed_week": _median(self.walking_speed_values),
+            "step_length_week": _median(self.step_length_values),
+            "walking_hr_avg_week": _median(self.walking_hr_values),
+            "stair_up_week": _median(self.stair_up_values),
+            "stair_down_week": _median(self.stair_down_values),
         }
 
 

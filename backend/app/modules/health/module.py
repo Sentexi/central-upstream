@@ -13,7 +13,7 @@ class HealthModule(BaseModule):
 
     def get_manifest(self) -> dict:
         manifest = super().get_manifest()
-        manifest["slots"] = ["health_view"]
+        manifest["slots"] = ["health_view", "fitness_view"]
         return manifest
 
     def check_ready(self) -> bool:

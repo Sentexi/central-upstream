@@ -666,6 +666,8 @@ function LineChart({
   secondaryColor = "#94a3b8",
   primaryStrokeWidth = 2.2,
   secondaryStrokeWidth = 1.3,
+  primaryPointRadius = 3,
+  secondaryPointRadius = 3,
 }: {
   title: string;
   primary: FitnessSeries[];
@@ -677,6 +679,8 @@ function LineChart({
   secondaryColor?: string;
   primaryStrokeWidth?: number;
   secondaryStrokeWidth?: number;
+  primaryPointRadius?: number;
+  secondaryPointRadius?: number;
 }) {
   const baseSeries = primary.length > 0 ? primary : secondary ?? [];
   if (baseSeries.length === 0) {
@@ -718,7 +722,13 @@ function LineChart({
 
   const valueToY = (value: number) => height - margin.bottom - ((value - yMin) / span) * innerHeight;
 
-  const renderSeries = (series: FitnessSeries[], color: string, strokeWidth: number, keyPrefix: string) =>
+  const renderSeries = (
+    series: FitnessSeries[],
+    color: string,
+    strokeWidth: number,
+    pointRadius: number,
+    keyPrefix: string
+  ) =>
     series.map((d, idx) => {
       if (d.value === null || d.value === undefined || Number.isNaN(d.value)) {
         return null;
@@ -733,11 +743,11 @@ function LineChart({
         return (
           <g key={`${keyPrefix}-line-${d.date}-${idx}`}>
             <line x1={x} x2={nextX} y1={y} y2={nextY} stroke={color} strokeWidth={strokeWidth} />
-            <circle cx={x} cy={y} r={3} fill={color} />
+            <circle cx={x} cy={y} r={pointRadius} fill={color} />
           </g>
         );
       }
-      return <circle key={`${keyPrefix}-point-${d.date}-${idx}`} cx={x} cy={y} r={3} fill={color} />;
+      return <circle key={`${keyPrefix}-point-${d.date}-${idx}`} cx={x} cy={y} r={pointRadius} fill={color} />;
     });
 
   return (
@@ -775,8 +785,8 @@ function LineChart({
           />
           <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
 
-          {secondary ? renderSeries(secondary, secondaryColor, secondaryStrokeWidth, "secondary") : null}
-          {renderSeries(primary, primaryColor, primaryStrokeWidth, "primary")}
+          {secondary ? renderSeries(secondary, secondaryColor, secondaryStrokeWidth, secondaryPointRadius, "secondary") : null}
+          {renderSeries(primary, primaryColor, primaryStrokeWidth, primaryPointRadius, "primary")}
 
           {xTickIndices.map((idx) => {
             const x = margin.left + idx * stepWidth + stepWidth / 2;
@@ -982,9 +992,22 @@ export function FitnessDashboardView() {
               primaryLabel="7D Moving Average"
               secondaryLabel="Gewicht"
               unit="kg"
-              secondaryColor="#94a3b8"
+              primaryColor="#fbbf24"
+              secondaryColor="#fbbf24"
+              primaryStrokeWidth={3.2}
+              secondaryStrokeWidth={1.2}
+              primaryPointRadius={4.2}
+              secondaryPointRadius={2.4}
             />
-            <LineChart title="VO2 Max" primary={vo2Series} unit="ml/kg/min" primaryLabel="VO2 Max" />
+            <LineChart
+              title="VO2 Max"
+              primary={vo2Series}
+              unit="ml/kg/min"
+              primaryLabel="VO2 Max"
+              primaryColor="#fca5a5"
+              primaryStrokeWidth={2.4}
+              primaryPointRadius={3.2}
+            />
             <EfficiencyChart efficiency={efficiencySeries} stairsUp={stairsUp} stairsDown={stairsDown} />
             <SimpleBarChart series={exerciseData} title="Exercise-Minuten" color="#22d3ee" unit={group === "weekly" ? "min/W" : "min"} />
             <ComboChart

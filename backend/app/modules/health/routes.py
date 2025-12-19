@@ -500,6 +500,86 @@ def _recent_values(values: Iterable[Optional[float]], limit: int = 21) -> List[f
     return filtered[-limit:]
 
 
+def _fitness_tertile_color(value: Optional[float], series: List[float]) -> str:
+    valid = [v for v in series if v is not None]
+    if not valid or value is None:
+        return "yellow"
+    sorted_vals = sorted(valid)
+    rank = sum(1 for v in sorted_vals if v <= value) / len(sorted_vals)
+    if rank >= 2 / 3:
+        return "green"
+    if rank >= 1 / 3:
+        return "yellow"
+    return "red"
+
+
+def _consistency_stats(
+    daily: List[Dict[str, Any]], min_exercise: int = 20, min_steps: int = 8000
+) -> Dict[str, int]:
+    active_days = 0
+    current_streak = 0
+    longest_streak = 0
+
+    sorted_days = sorted(daily, key=lambda d: d.get("date") or "")
+    for entry in sorted_days:
+        exercise = entry.get("exercise_min") or 0
+        steps = entry.get("steps") or 0
+        meets_threshold = exercise >= min_exercise or steps >= min_steps
+        if meets_threshold:
+            active_days += 1
+            current_streak += 1
+            longest_streak = max(longest_streak, current_streak)
+        else:
+            current_streak = 0
+
+    return {"active_days": active_days, "current_streak": current_streak, "longest_streak": longest_streak}
+
+
+def _consistency_color(active_days: int, total_days: int) -> str:
+    if total_days <= 0:
+        return "yellow"
+    ratio = active_days / total_days
+    if ratio >= 0.7:
+        return "green"
+    if ratio >= 0.43:
+        return "yellow"
+    return "red"
+
+
+def _percent_delta(current: Optional[float], baseline: Optional[float]) -> Optional[float]:
+    if current is None or baseline is None or baseline == 0:
+        return None
+    return (current - baseline) / baseline
+
+
+def _format_percent_delta(current: Optional[float], baseline: Optional[float]) -> str:
+    pct = _percent_delta(current, baseline)
+    if pct is None:
+        return "Keine Baseline"
+    return f"{pct:+.0%}"
+
+
+def _sum_metric(entries: List[Dict[str, Any]], key: str) -> Optional[float]:
+    values = [row.get(key) for row in entries if row.get(key) is not None]
+    if not values:
+        return None
+    return float(sum(values))
+
+
+def _trend_delta(series: List[Dict[str, Any]], value_key: str, window: int = 7) -> tuple[Optional[float], Optional[float]]:
+    sorted_series = sorted(series, key=lambda row: row.get("date") or "")
+    values = [row.get(value_key) for row in sorted_series if row.get(value_key) is not None]
+    if len(values) < 4:
+        return None, None
+    recent = values[-window:]
+    previous = values[-2 * window : -window] if len(values) >= 2 * window else values[:-window]
+    if not previous or not recent:
+        return None, None
+    prev_med = median(previous)
+    recent_med = median(recent)
+    return recent_med, _percent_delta(recent_med, prev_med)
+
+
 def _sleep_duration_score(hours: Optional[float]) -> Optional[int]:
     if hours is None:
         return None
@@ -860,6 +940,208 @@ def _build_energy_payload(series: List[Dict[str, Any]], baseline: List[Dict[str,
     }
 
 
+def _fitness_progress_notes(
+    range_daily: List[Dict[str, Any]],
+    baseline_daily: List[Dict[str, Any]],
+    consistency: Dict[str, int],
+    efficiency_change: Optional[float],
+) -> List[str]:
+    notes: List[str] = []
+    if range_daily:
+        exercise_values = [row.get("exercise_min") for row in range_daily if row.get("exercise_min") is not None]
+        baseline_exercise = [row.get("exercise_min") for row in baseline_daily if row.get("exercise_min") is not None]
+        if exercise_values and baseline_exercise:
+            current_avg = sum(exercise_values) / len(exercise_values)
+            baseline_med = median(baseline_exercise)
+            pct = _percent_delta(current_avg, baseline_med)
+            if pct is not None:
+                notes.append(f"Exercise-Minuten {pct:+.0%} vs. 4-Wochen-Median")
+
+        steps_values = [row.get("steps") for row in range_daily if row.get("steps") is not None]
+        baseline_steps = [row.get("steps") for row in baseline_daily if row.get("steps") is not None]
+        if steps_values and baseline_steps:
+            current_total = sum(steps_values)
+            baseline_med = median(baseline_steps)
+            pct = _percent_delta(current_total / len(steps_values), baseline_med)
+            if pct is not None:
+                notes.append(f"Steps {pct:+.0%} vs. 4-Wochen-Median")
+
+    if consistency.get("current_streak"):
+        notes.append(f"Streak {consistency['current_streak']} Tage")
+
+    if efficiency_change is not None:
+        direction = "verbessert sich" if efficiency_change < 0 else "verschlechtert sich"
+        notes.append(f"Walking HR/Speed {direction} ({efficiency_change:+.0%})")
+
+    return notes[:5]
+
+
+def _build_fitness_payload(
+    range_key: str,
+    group_key: str,
+    daily_series: List[Dict[str, Any]],
+    weekly_series: List[Dict[str, Any]],
+    weekly_baseline: List[Dict[str, Any]],
+    baseline_daily: List[Dict[str, Any]],
+):
+    weekly_values = [row.get("exercise_min_week") for row in weekly_baseline if row.get("exercise_min_week") is not None]
+    weekly_median = median(weekly_values) if weekly_values else None
+    weekly_volume = weekly_series[-1] if weekly_series else None
+    weekly_volume_value = weekly_volume.get("exercise_min_week") if weekly_volume else None
+    volume_color = _fitness_tertile_color(weekly_volume_value, weekly_values)
+    volume_delta = _format_delta(weekly_volume_value, weekly_median, " min")
+
+    consistency = _consistency_stats(daily_series)
+    consistency_color = _consistency_color(consistency["active_days"], len(daily_series))
+
+    steps_total = _sum_metric(daily_series, "steps")
+    distance_total = _sum_metric(daily_series, "distance_km")
+
+    distance_week_values = [
+        row.get("distance_km_week") for row in weekly_baseline if row.get("distance_km_week") is not None
+    ]
+    distance_baseline = median(distance_week_values) if distance_week_values else None
+    distance_color = _fitness_tertile_color(
+        steps_total,
+        [row.get("steps_week") for row in weekly_baseline if row.get("steps_week") is not None],
+    )
+
+    efficiency_series: List[Dict[str, Any]] = []
+    for row in daily_series:
+        idx = _safe_divide(row.get("walking_hr_avg"), row.get("walking_speed"))
+        efficiency_series.append({"date": row.get("date"), "hr_speed_index": idx})
+
+    efficiency_value = next((row["hr_speed_index"] for row in reversed(efficiency_series) if row.get("hr_speed_index") is not None), None)
+    efficiency_recent, efficiency_change = _trend_delta(efficiency_series, "hr_speed_index")
+    efficiency_baseline = (
+        efficiency_recent / (1 + efficiency_change) if efficiency_recent is not None and efficiency_change is not None else None
+    )
+    efficiency_color = "yellow"
+    if efficiency_change is not None:
+        if efficiency_change <= -0.03:
+            efficiency_color = "green"
+        elif efficiency_change >= 0.03:
+            efficiency_color = "red"
+
+    mobility_series = [row for row in daily_series if row.get("walking_speed") is not None or row.get("step_length") is not None]
+    mobility_change_value, mobility_change = _trend_delta(mobility_series, "walking_speed")
+    mobility_baseline = (
+        mobility_change_value / (1 + mobility_change) if mobility_change_value is not None and mobility_change is not None else None
+    )
+    mobility_color = "yellow"
+    if mobility_change is not None:
+        if mobility_change >= 0.03:
+            mobility_color = "green"
+        elif mobility_change <= -0.03:
+            mobility_color = "red"
+
+    tiles = {
+        "volume": {
+            "label": "Weekly Volume",
+            "value": weekly_volume_value,
+            "unit": "min",
+            "delta_text": volume_delta,
+            "color": volume_color,
+            "detail": weekly_volume.get("week_label") if weekly_volume else None,
+        },
+        "consistency": {
+            "label": "Consistency",
+            "value": consistency["active_days"],
+            "unit": f"/{len(daily_series)}",
+            "color": consistency_color,
+            "streak": consistency["current_streak"],
+            "longest": consistency["longest_streak"],
+        },
+        "distance": {
+            "label": "Distance & Steps",
+            "value": distance_total if distance_total else None,
+            "unit": "km",
+            "secondary": steps_total if steps_total else None,
+            "secondary_unit": "Steps",
+            "color": distance_color,
+            "delta_text": _format_percent_delta(distance_total, distance_baseline),
+        },
+        "efficiency": {
+            "label": "Efficiency Proxy",
+            "value": efficiency_value,
+            "unit": "HR/Speed",
+            "color": efficiency_color,
+            "delta_text": _format_percent_delta(efficiency_recent, efficiency_baseline),
+        },
+        "mobility": {
+            "label": "Mobility",
+            "value": mobility_change_value,
+            "unit": "km/h",
+            "color": mobility_color,
+            "delta_text": _format_percent_delta(mobility_change_value, mobility_baseline),
+        },
+    }
+
+    exercise_daily = [{"date": row.get("date"), "value": row.get("exercise_min")} for row in daily_series]
+    exercise_weekly = [
+        {"date": row.get("week_start"), "value": row.get("exercise_min_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+
+    steps_daily = [{"date": row.get("date"), "value": row.get("steps")} for row in daily_series]
+    distance_daily = [{"date": row.get("date"), "value": row.get("distance_km")} for row in daily_series]
+    steps_weekly = [
+        {"date": row.get("week_start"), "value": row.get("steps_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+    distance_weekly = [
+        {"date": row.get("week_start"), "value": row.get("distance_km_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+
+    active_daily = [{"date": row.get("date"), "value": row.get("active_kcal")} for row in daily_series]
+    floors_daily = [{"date": row.get("date"), "value": row.get("floors")} for row in daily_series]
+    active_weekly = [
+        {"date": row.get("week_start"), "value": row.get("active_kcal_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+    floors_weekly = [
+        {"date": row.get("week_start"), "value": row.get("floors_week"), "label": row.get("week_label")}
+        for row in weekly_series
+    ]
+
+    efficiency_chart = [
+        {"date": row.get("date"), "value": _safe_divide(row.get("walking_hr_avg"), row.get("walking_speed")), "speed": row.get("walking_speed"), "hr": row.get("walking_hr_avg")}
+        for row in daily_series
+    ]
+    stair_up = [{"date": row.get("date"), "value": row.get("stair_up")} for row in daily_series if row.get("stair_up") is not None]
+    stair_down = [{"date": row.get("date"), "value": row.get("stair_down")} for row in daily_series if row.get("stair_down") is not None]
+
+    notes = _fitness_progress_notes(daily_series, baseline_daily, consistency, efficiency_change)
+
+    return {
+        "range": range_key,
+        "group": group_key,
+        "tiles": tiles,
+        "charts": {
+            "exercise": {"daily": exercise_daily, "weekly": exercise_weekly},
+            "steps_distance": {
+                "steps": steps_daily,
+                "distance": distance_daily,
+                "steps_weekly": steps_weekly,
+                "distance_weekly": distance_weekly,
+            },
+            "active_floors": {
+                "active_kcal": active_daily,
+                "floors": floors_daily,
+                "active_kcal_weekly": active_weekly,
+                "floors_weekly": floors_weekly,
+            },
+            "efficiency": {
+                "efficiency_index": efficiency_chart,
+                "stair_up": stair_up,
+                "stair_down": stair_down,
+            },
+        },
+        "notes": notes,
+    }
+
+
 @bp.get("/energy-monitor")
 def energy_monitor():
     range_key = request.args.get("range", "7d").lower()
@@ -877,4 +1159,38 @@ def energy_monitor():
     baseline = repo.get_daily_summary(baseline_start, today)
 
     payload = _build_energy_payload(series, baseline, range_key)
+    return jsonify(payload)
+
+
+@bp.get("/fitness")
+def fitness_dashboard():
+    range_key = request.args.get("range", "7d").lower()
+    group_key = request.args.get("group", "daily").lower()
+    if group_key not in {"daily", "weekly"}:
+        group_key = "daily"
+
+    days = RANGE_DAYS.get(range_key, 7)
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+
+    repo = _get_repository()
+    daily_series = repo.get_fitness_daily_aggregates(start, today)
+    weekly_baseline_start = today - timedelta(days=7 * 12 - 1)
+    weekly_series_full = repo.get_fitness_weekly_summary(weekly_baseline_start, today)
+
+    weekly_series = [
+        row
+        for row in weekly_series_full
+        if row.get("week_start") and date.fromisoformat(str(row["week_start"])) >= start - timedelta(days=6)
+    ]
+    baseline_daily = repo.get_fitness_daily_aggregates(start - timedelta(days=28), start - timedelta(days=1))
+
+    payload = _build_fitness_payload(
+        range_key,
+        group_key,
+        daily_series,
+        weekly_series,
+        weekly_series_full[-12:],
+        baseline_daily,
+    )
     return jsonify(payload)

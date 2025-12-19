@@ -668,6 +668,9 @@ function LineChart({
   secondaryStrokeWidth = 1.3,
   primaryPointRadius = 3,
   secondaryPointRadius = 3,
+  yMin,
+  yMax,
+  backgroundBands,
 }: {
   title: string;
   primary: FitnessSeries[];
@@ -681,6 +684,9 @@ function LineChart({
   secondaryStrokeWidth?: number;
   primaryPointRadius?: number;
   secondaryPointRadius?: number;
+  yMin?: number;
+  yMax?: number;
+  backgroundBands?: { from: number; to: number; color: string; opacity?: number }[];
 }) {
   const baseSeries = primary.length > 0 ? primary : secondary ?? [];
   if (baseSeries.length === 0) {
@@ -703,16 +709,19 @@ function LineChart({
     .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
   const minValue = allValues.length ? Math.min(...allValues) : 0;
   const maxValue = allValues.length ? Math.max(...allValues) : 1;
-  const yTicks = generateTicks(minValue, maxValue, 5);
-  const yMin = yTicks[0] ?? 0;
-  const yMax = yTicks[yTicks.length - 1] ?? Math.max(maxValue, 1);
-  const span = yMax - yMin || 1;
+  const desiredMin = yMin !== undefined ? Math.min(yMin, minValue) : minValue;
+  const desiredMax = yMax !== undefined ? Math.max(yMax, maxValue) : maxValue;
+  const yTicks = generateTicks(desiredMin, desiredMax, 5);
+  const yMinValue = yTicks[0] ?? desiredMin;
+  const yMaxValue = yTicks[yTicks.length - 1] ?? Math.max(desiredMax, 1);
+  const span = yMaxValue - yMinValue || 1;
 
   const height = 260;
   const width = Math.max(380, baseSeries.length * 38);
   const margin = { top: 18, right: 56, bottom: 36, left: 52 };
   const innerHeight = height - margin.top - margin.bottom - 18;
   const stepWidth = (width - margin.left - margin.right) / Math.max(baseSeries.length, 1);
+  const chartWidth = width - margin.left - margin.right;
 
   const xTickCount = Math.min(5, baseSeries.length || 1);
   const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((baseSeries.length - 1) / (xTickCount - 1))) : 1;
@@ -720,7 +729,7 @@ function LineChart({
     (idx) => idx % xTickStep === 0 || idx === baseSeries.length - 1
   );
 
-  const valueToY = (value: number) => height - margin.bottom - ((value - yMin) / span) * innerHeight;
+  const valueToY = (value: number) => height - margin.bottom - ((value - yMinValue) / span) * innerHeight;
 
   const renderSeries = (
     series: FitnessSeries[],
@@ -728,27 +737,54 @@ function LineChart({
     strokeWidth: number,
     pointRadius: number,
     keyPrefix: string
-  ) =>
-    series.map((d, idx) => {
+  ) => {
+    type ChartPoint = { x: number; y: number; key: string };
+
+    const points: ChartPoint[] = [];
+    const segments: ChartPoint[][] = [];
+    let currentSegment: ChartPoint[] = [];
+
+    series.forEach((d, idx) => {
       if (d.value === null || d.value === undefined || Number.isNaN(d.value)) {
-        return null;
+        if (currentSegment.length) {
+          segments.push(currentSegment);
+          currentSegment = [];
+        }
+        return;
       }
+
       const x = margin.left + idx * stepWidth + stepWidth * 0.5;
       const y = valueToY(d.value);
-      const next = series[idx + 1];
-      const nextValue = next?.value;
-      if (next && nextValue !== null && nextValue !== undefined && !Number.isNaN(nextValue)) {
-        const nextX = margin.left + (idx + 1) * stepWidth + stepWidth * 0.5;
-        const nextY = valueToY(nextValue);
-        return (
-          <g key={`${keyPrefix}-line-${d.date}-${idx}`}>
-            <line x1={x} x2={nextX} y1={y} y2={nextY} stroke={color} strokeWidth={strokeWidth} />
-            <circle cx={x} cy={y} r={pointRadius} fill={color} />
-          </g>
-        );
-      }
-      return <circle key={`${keyPrefix}-point-${d.date}-${idx}`} cx={x} cy={y} r={pointRadius} fill={color} />;
+      const point = { x, y, key: `${keyPrefix}-point-${d.date ?? idx}-${idx}` };
+      points.push(point);
+      currentSegment.push(point);
     });
+
+    if (currentSegment.length) {
+      segments.push(currentSegment);
+    }
+
+    return (
+      <g key={`${keyPrefix}-series`}>
+        {segments.map((segment, segmentIdx) => (
+          segment.length > 1 ? (
+            <path
+              key={`${keyPrefix}-path-${segmentIdx}`}
+              d={segment.map((pt, idx) => `${idx === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
+              stroke={color}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : null
+        ))}
+        {points.map((point) => (
+          <circle key={point.key} cx={point.x} cy={point.y} r={pointRadius} fill={color} />
+        ))}
+      </g>
+    );
+  };
 
   return (
     <GlassCard className="chart-panel">
@@ -765,6 +801,28 @@ function LineChart({
       </div>
       <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
         <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
+          {backgroundBands?.map((band, idx) => {
+            const bandStart = Math.max(Math.min(band.from, band.to), yMinValue);
+            const bandEnd = Math.min(Math.max(band.from, band.to), yMaxValue);
+            if (bandEnd <= bandStart) return null;
+
+            const yTop = valueToY(bandEnd);
+            const yBottom = valueToY(bandStart);
+            const bandHeight = yBottom - yTop;
+
+            return (
+              <rect
+                key={`band-${idx}`}
+                x={margin.left}
+                y={yTop}
+                width={chartWidth}
+                height={bandHeight}
+                fill={band.color}
+                opacity={band.opacity ?? 0.25}
+              />
+            );
+          })}
+
           {yTicks.map((tick) => {
             const y = valueToY(tick);
             return (
@@ -844,6 +902,11 @@ export function FitnessDashboardView() {
       : data?.charts.active_floors.resting_kcal ?? [];
   const weightSeries = group === "weekly" ? data?.charts.weight.weekly ?? [] : data?.charts.weight.daily ?? [];
   const vo2Series = group === "weekly" ? data?.charts.vo2max.weekly ?? [] : data?.charts.vo2max.daily ?? [];
+  const vo2Values = vo2Series
+    .map((d) => d.value)
+    .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+  const vo2Min = vo2Values.length ? Math.min(30, ...vo2Values) : 30;
+  const vo2Max = vo2Values.length ? Math.max(60, ...vo2Values) : 60;
 
   const efficiencySeries = data?.charts.efficiency.efficiency_index ?? [];
   const stairsUp = data?.charts.efficiency.stair_up ?? [];
@@ -1007,6 +1070,15 @@ export function FitnessDashboardView() {
               primaryColor="#fca5a5"
               primaryStrokeWidth={2.4}
               primaryPointRadius={3.2}
+              yMin={vo2Min}
+              yMax={vo2Max}
+              backgroundBands={[
+                { from: 60, to: vo2Max, color: "#93c5fd", opacity: 0.25 },
+                { from: 52, to: 59.999, color: "#a7f3d0", opacity: 0.25 },
+                { from: 45, to: 51.999, color: "#6ee7b7", opacity: 0.25 },
+                { from: 38, to: 44.999, color: "#facc15", opacity: 0.25 },
+                { from: vo2Min, to: 37.999, color: "#fca5a5", opacity: 0.25 },
+              ]}
             />
             <EfficiencyChart efficiency={efficiencySeries} stairsUp={stairsUp} stairsDown={stairsDown} />
             <SimpleBarChart series={exerciseData} title="Exercise-Minuten" color="#22d3ee" unit={group === "weekly" ? "min/W" : "min"} />

@@ -143,11 +143,21 @@ def get_settings():
 
 @bp.get("/status")
 def get_status():
+    base_status = {
+        "stages": {
+            "normalizing": "Payload validieren",
+            "ingesting": "Import läuft",
+            "done": "Import abgeschlossen",
+            "error": "Fehler beim Import",
+        },
+        "upload_hint": "Lade einen Health Auto Export als JSON hoch, um den Import manuell zu starten.",
+    }
+
     if _is_syncing():
-        return jsonify({"syncing": True, "sync_status": _read_sync_status()})
+        return jsonify({"syncing": True, "sync_status": _read_sync_status(), **base_status})
 
     repo = _get_repository()
-    return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso()})
+    return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso(), **base_status})
 
 
 @bp.get("/sync_status")

@@ -4,7 +4,7 @@ import type { ModuleManifest } from "./core/types";
 import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 import { SettingsPage } from "./settings/SettingsPage";
 
-type View = "today" | "work" | "dashboard" | "health" | "fitness" | "settings";
+type View = "today" | "work" | "dashboard" | "health" | "fitness" | "calories" | "settings";
 
 type HealthSyncStatus = {
   syncing: boolean;
@@ -81,6 +81,7 @@ function App() {
   const dashboardWidgets = getWidgetsForSlot(activeModules, "dashboard_view");
   const healthWidgets = getWidgetsForSlot(activeModules, "health_view");
   const fitnessWidgets = getWidgetsForSlot(activeModules, "fitness_view");
+  const caloriesWidgets = getWidgetsForSlot(activeModules, "calories_view");
 
   return (
     <div className="app-shell">
@@ -160,6 +161,17 @@ function App() {
                 🏃
               </span>
               <span className="nav-label">Fitness</span>
+            </button>
+            <button
+              className={`nav-item ${view === "calories" ? "active" : ""}`.trim()}
+              type="button"
+              onClick={() => setView("calories")}
+              aria-label="Calories"
+            >
+              <span className="nav-icon" aria-hidden>
+                🥗
+              </span>
+              <span className="nav-label">Calories</span>
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
@@ -374,6 +386,42 @@ function App() {
                   )}
                   {fitnessWidgets.map((mod, i) =>
                     mod.FitnessWidget ? <mod.FitnessWidget key={i} /> : null
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : view === "calories" ? (
+            <div className="app-grid">
+              <header className="app-header">
+                <span className="kicker">Wellbeing</span>
+                <h1 className="title">Calories &amp; Vape</h1>
+                <p className="subtitle">
+                  Plain-Text Capture, Draft Review, Importe und Vape-Counter in einer konsolidierten Ansicht.
+                </p>
+              </header>
+              <section className="stack">
+                <div className="section-heading">Calories</div>
+                <div className="grid-cards">
+                  {manifests === null && (
+                    <GlassCard glow className="loader">
+                      <span className="kicker">Booting</span>
+                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <p className="card-description">
+                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {manifests && caloriesWidgets.length === 0 && (
+                    <GlassCard>
+                      <div className="kicker">Kein Calories-Modul aktiv</div>
+                      <h3 className="card-title">Aktiviere das Calories-Modul</h3>
+                      <p className="card-description">
+                        Hinterlege einen LLM-Key in den Settings, um Kalorien und Vape zu erfassen.
+                      </p>
+                    </GlassCard>
+                  )}
+                  {caloriesWidgets.map((mod, i) =>
+                    mod.CaloriesWidget ? <mod.CaloriesWidget key={i} /> : null
                   )}
                 </div>
               </section>

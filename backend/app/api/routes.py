@@ -81,8 +81,14 @@ def save_settings(module_id: str):
         return jsonify({"ok": False, "error": error})
 
     # Persist only keys that are part of the schema
-    schema_keys = {field["key"] for field in provider.get_settings_schema()}
-    filtered = {k: v for k, v in payload.items() if k in schema_keys}
-    settings_storage.save_settings_for_module(module_id, filtered)
+    schema = provider.get_settings_schema()
+    schema_keys = {field["key"] for field in schema}
+    read_only_keys = {field["key"] for field in schema if field.get("read_only")}
+
+    filtered = {k: v for k, v in payload.items() if k in schema_keys and k not in read_only_keys}
+    # Bewahre read-only Felder aus dem bestehenden Storage, damit Validierungsstatus erhalten bleibt.
+    existing = settings_storage.get_settings_for_module(module_id)
+    persisted = {**{k: v for k, v in existing.items() if k in read_only_keys}, **filtered}
+    settings_storage.save_settings_for_module(module_id, persisted)
 
     return jsonify({"ok": True})

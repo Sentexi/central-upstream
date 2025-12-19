@@ -1132,3 +1132,185 @@ body {
   color: #fb7185;
 }
 
+.capture-card {
+  padding: 16px;
+}
+
+.capture-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.input--textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.draft-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.draft-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 8px;
+}
+
+.draft-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.inline-fields {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.stacked-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
+  gap: 10px;
+  align-items: end;
+  padding: 8px 0;
+}
+
+.stacked-bar {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.stacked-bar:hover {
+  transform: translateY(-2px);
+}
+
+.stacked-bar.is-active {
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.stacked-bar__stack {
+  width: 100%;
+  min-height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+
+.stacked-bar__segment {
+  width: 100%;
+}
+
+.stacked-bar__label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.stacked-bar__value {
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.4fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.table-head {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.table-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.table-row:last-of-type {
+  border-bottom: none;
+}
+
+.vape-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
+  gap: 10px;
+  align-items: end;
+  min-height: 160px;
+}
+
+.vape-bar {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.vape-bar__fill {
+  width: 100%;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.8), rgba(96, 165, 250, 0.2));
+  border: 1px solid rgba(96, 165, 250, 0.6);
+}
+
+.vape-bar__fill.is-coil {
+  background: linear-gradient(180deg, rgba(251, 113, 133, 0.8), rgba(251, 113, 133, 0.3));
+  border-color: rgba(251, 113, 133, 0.7);
+}
+
+.vape-bar__avg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.6);
+}
+
+.vape-bar__label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pill.warning {
+  background: rgba(251, 113, 133, 0.12);
+  border-color: rgba(251, 113, 133, 0.4);
+  color: #fecdd3;
+}
+
+.import-table .table-row {
+  align-items: center;
+}
+
+@media (max-width: 960px) {
+  .capture-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,4 +1,10 @@
-export type ModuleSlot = "today_view" | "work_dashboard" | "dashboard_view" | "health_view" | "fitness_view";
+export type ModuleSlot =
+  | "today_view"
+  | "work_dashboard"
+  | "dashboard_view"
+  | "health_view"
+  | "fitness_view"
+  | "calories_view";
 
 export interface ModuleManifest {
   id: string;
@@ -16,6 +22,7 @@ export interface ModuleFrontend {
   DashboardWidget?: React.ComponentType;
   HealthWidget?: React.ComponentType;
   FitnessWidget?: React.ComponentType;
+  CaloriesWidget?: React.ComponentType;
 }
 
 export type SettingsFieldType = "string" | "password" | "boolean" | "select";

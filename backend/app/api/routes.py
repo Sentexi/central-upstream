@@ -39,6 +39,7 @@ def get_settings_schema():
     modules = []
     for provider in get_all_providers():
         status_meta = provider.get_status_metadata()
+        manual_import_meta = provider.get_manual_import_metadata()
 
         modules.append(
             {
@@ -46,6 +47,7 @@ def get_settings_schema():
                 "module_name": provider.module_name,
                 "fields": provider.get_settings_schema(),
                 **({"status": status_meta} if status_meta else {}),
+                **({"manual_import": manual_import_meta} if manual_import_meta else {}),
             }
         )
     return jsonify({"modules": modules})

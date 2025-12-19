@@ -35,3 +35,14 @@ Kein venv, keine npm-Installationen – das passiert lokal je nach System.
 
 Die Implementierung der eigentlichen Module (z.B. \`quick_capture\`) erfolgt später
 unter \`backend/app/modules/\` und \`frontend/src/modules/\`.
+
+### Manual-Import Metadaten (Health)
+
+Das Health-Modul liefert in seinem Settings-Schema zusätzlich einen \`manual_import\` Block
+(\`GET /api/settings/schema\`), der dem Frontend Dateiuploads beschreibt:
+
+- \`endpoint\`: Ziel-URL für den Upload (\`/api/health/ingest\`)
+- \`upload_kind\`: \`\"json\"\` bedeutet, dass die Datei als JSON gelesen und als \`application/json\` gesendet wird (statt multipart).
+- \`accept\`: Liste erlaubter MIME-Types/Endungen (z. B. \`[\"application/json\", \".json\"]\`)
+- \`help_text\` / \`upload_hint\`: kurze Hinweise für die UI
+- \`success_message\` / \`error_message\`: optionale Texte für Upload-Feedback

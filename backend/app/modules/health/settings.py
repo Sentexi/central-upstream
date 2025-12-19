@@ -44,6 +44,24 @@ class HealthSettingsProvider(ModuleSettingsProvider):
             "label": "Last sync",
             "value_key": "last_imported_at",
             "formatter": "datetime",
+            "stage_labels": {
+                "normalizing": "Payload validieren",
+                "ingesting": "Import läuft",
+                "done": "Import abgeschlossen",
+                "error": "Fehler beim Import",
+            },
+            "upload_hint": "Lade einen Health Auto Export als JSON hoch, um den Import manuell zu starten.",
+        }
+
+    def get_manual_import_metadata(self):
+        return {
+            "endpoint": "/api/health/ingest",
+            "label": "Manueller Health Import",
+            "help_text": "JSON-Export der Health Auto Export App hochladen. Startet direkt einen Sync.",
+            "accept": ["application/json", ".json"],
+            "upload_kind": "json",
+            "success_message": "Sync wird gestartet...",
+            "error_message": "Import fehlgeschlagen",
         }
 
 

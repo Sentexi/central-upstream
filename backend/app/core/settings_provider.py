@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 SettingsField = Dict[str, Any]
 SettingsStatus = Dict[str, Any]
+SettingsManualImport = Dict[str, Any]
 
 
 class ModuleSettingsProvider(ABC):
@@ -24,4 +25,8 @@ class ModuleSettingsProvider(ABC):
 
     def get_status_metadata(self) -> SettingsStatus | None:
         """Optional status metadata to display status information in the UI."""
+        return None
+
+    def get_manual_import_metadata(self) -> SettingsManualImport | None:
+        """Optional metadata to drive manual import (e.g. file upload) in the UI."""
         return None

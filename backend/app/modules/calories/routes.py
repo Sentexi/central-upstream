@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, g
 
 from app.core.settings_storage import settings_storage
 
@@ -117,23 +117,35 @@ def _ensure_vape_schema(conn: sqlite3.Connection):
 
 
 def _get_calories_conn() -> sqlite3.Connection:
-    conn = current_app.extensions.get("calories_db")  # type: ignore[attr-defined]
+    conn = g.get("calories_db")
     if conn:
         return conn
     conn = _connect(_get_calories_db_path())
     _ensure_calories_schema(conn)
-    current_app.extensions["calories_db"] = conn
+    g.calories_db = conn
     return conn
 
 
 def _get_vape_conn() -> sqlite3.Connection:
-    conn = current_app.extensions.get("vape_db")  # type: ignore[attr-defined]
+    conn = g.get("vape_db")
     if conn:
         return conn
     conn = _connect(_get_vape_db_path())
     _ensure_vape_schema(conn)
-    current_app.extensions["vape_db"] = conn
+    g.vape_db = conn
     return conn
+
+
+def close_calories_conn(_=None):
+    conn = g.pop("calories_db", None)
+    if conn:
+        conn.close()
+
+
+def close_vape_conn(_=None):
+    conn = g.pop("vape_db", None)
+    if conn:
+        conn.close()
 
 
 def _coerce_date(value: Any) -> Optional[str]:

@@ -19,13 +19,19 @@ if [ ! -d ".venv" ]; then
   "$PYTHON_BIN" -m venv .venv
 fi
 
+if [ ! -f ".venv/bin/activate" ]; then
+  rm -rf .venv
+  "$PYTHON_BIN" -m venv .venv
+fi
+
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
 python -m pip install -U pip
 
-# Wheel installieren (liegt im Release-Bundle unter ./wheels/)
-python -m pip install --no-cache-dir ./wheels/*.whl
+# pick newest wheel (by version in filename)
+WHEEL="$(ls -1 ./wheels/central_upstream-*.whl | sort -V | tail -n 1)"
+python -m pip install --force-reinstall --no-cache-dir "$WHEEL"
 
 # SQLite/Volumes: nutzt ihr z.B. /app/data im Docker; hier lokal ./data
 export PYTHONPATH="$APP_DIR"

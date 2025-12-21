@@ -46,3 +46,20 @@ Das Health-Modul liefert in seinem Settings-Schema zusätzlich einen \`manual_im
 - \`accept\`: Liste erlaubter MIME-Types/Endungen (z. B. \`[\"application/json\", \".json\"]\`)
 - \`help_text\` / \`upload_hint\`: kurze Hinweise für die UI
 - \`success_message\` / \`error_message\`: optionale Texte für Upload-Feedback
+
+### Linux (Ubuntu/Debian) – Install via GitHub Release Bundle
+
+sudo apt update
+sudo apt install -y unzip python3-venv
+
+mkdir -p /opt/central-upstream && cd /opt/central-upstream
+
+# download release asset (replace OWNER/REPO + TAG)
+curl -L -o release_bundle.zip "https://github.com/OWNER/REPO/releases/download/v0.1.3/release_bundle.zip"
+
+unzip -o release_bundle.zip
+cp .env.example .env
+
+chmod +x run.sh
+./run.sh
+

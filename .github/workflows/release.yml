@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0  # wichtig für setuptools_scm (Tags!)
           
       - name: Fetch tags
-          run: git fetch --tags --force
+        run: git fetch --tags --force
 
       - name: Setup Node
         uses: actions/setup-node@v4

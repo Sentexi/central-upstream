@@ -14,7 +14,7 @@ def discover_modules():
     - Es gibt eine module.py mit einer Variable "module",
       die eine Instanz von BaseModule enthält.
     """
-    from app import modules  # type: ignore
+    from .. import modules  # type: ignore
 
     for finder, name, ispkg in pkgutil.iter_modules(modules.__path__, modules.__name__ + "."):
         # In jedem Modul-Paket versuchen wir module.py zu importieren

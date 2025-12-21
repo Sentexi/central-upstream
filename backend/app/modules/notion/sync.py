@@ -6,7 +6,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import current_app
 
-from app.core.settings_storage import settings_storage
+from ...core.settings_storage import settings_storage
 from .notion_client import NotionClient
 from .repository import NotionRepository
 from .utils import (

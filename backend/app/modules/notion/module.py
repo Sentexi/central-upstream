@@ -1,6 +1,6 @@
 import os
 
-from app.core.module_base import BaseModule
+from ...core.module_base import BaseModule
 from .routes import bp
 from .schema import ensure_schema
 
@@ -27,7 +27,7 @@ class NotionModule(BaseModule):
     def check_ready(self) -> bool:
         # Module is ready when database exists and settings are present
         try:
-            from app.core.settings_storage import settings_storage
+            from ...core.settings_storage import settings_storage
 
             settings = settings_storage.get_settings_for_module(self.id)
             return bool(settings.get("notion_api_key") and settings.get("notion_database_id"))

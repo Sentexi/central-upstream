@@ -1,4 +1,4 @@
-from app.core.module_base import BaseModule
+from ...core.module_base import BaseModule
 
 
 class QuickCaptureModule(BaseModule):

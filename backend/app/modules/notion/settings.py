@@ -1,6 +1,6 @@
 from typing import Any, Dict, Tuple
 import requests
-from app.core.settings_provider import ModuleSettingsProvider, SettingsField
+from ...core.settings_provider import ModuleSettingsProvider, SettingsField
 
 
 class NotionSettingsProvider(ModuleSettingsProvider):

@@ -1,0 +1,12 @@
+[Unit]
+Description=Central Upstream
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/central-upstream
+ExecStart=/opt/central-upstream/run.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

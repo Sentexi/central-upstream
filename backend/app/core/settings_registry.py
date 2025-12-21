@@ -12,7 +12,7 @@ registered_settings_providers: List[ModuleSettingsProvider] = []
 def discover_settings_providers():
     """Find settings providers exposed by installed modules."""
     registered_settings_providers.clear()
-    from app import modules  # type: ignore
+    from .. import modules  # type: ignore
 
     for _finder, name, _ispkg in pkgutil.iter_modules(
         modules.__path__, modules.__name__ + "."

@@ -6,8 +6,8 @@ from typing import Tuple
 import requests
 from flask import current_app
 
-from app.core.settings_provider import ModuleSettingsProvider, SettingsField
-from app.core.settings_storage import settings_storage
+from ...core.settings_provider import ModuleSettingsProvider, SettingsField
+from ...core.settings_storage import settings_storage
 
 
 class CaloriesSettingsProvider(ModuleSettingsProvider):

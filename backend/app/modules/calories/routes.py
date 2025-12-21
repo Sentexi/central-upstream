@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from flask import Blueprint, current_app, jsonify, request, g
 
-from app.core.settings_storage import settings_storage
+from ...core.settings_storage import settings_storage
 
 calories_bp = Blueprint("calories", __name__)
 vape_bp = Blueprint("vape", __name__)

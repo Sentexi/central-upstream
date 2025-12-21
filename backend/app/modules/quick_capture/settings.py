@@ -1,4 +1,4 @@
-from app.core.settings_provider import ModuleSettingsProvider, SettingsField
+from ...core.settings_provider import ModuleSettingsProvider, SettingsField
 
 
 class QuickCaptureSettingsProvider(ModuleSettingsProvider):

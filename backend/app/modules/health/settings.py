@@ -2,7 +2,7 @@ from urllib.parse import urljoin
 
 from flask import request
 
-from app.core.settings_provider import ModuleSettingsProvider, SettingsField
+from ...core.settings_provider import ModuleSettingsProvider, SettingsField
 
 
 class HealthSettingsProvider(ModuleSettingsProvider):

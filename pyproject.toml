@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "central-upstream"
 description = "Central Upstream web app (Flask + React build served as static)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { text = "Proprietary" }
 authors = [{ name = "Andrey" }]
 dynamic = ["version"]

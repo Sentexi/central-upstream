@@ -4,6 +4,12 @@ __pycache__/
 .env
 *.env
 
+# Data
+backend/app/data/
+
+# Settings
+backend/app/settings.sqlite
+
 # venv (lokal, nicht ins Repo)
 venv/
 backend/venv/

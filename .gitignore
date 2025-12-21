@@ -21,6 +21,13 @@ frontend/node_modules/
 # Build
 dist/
 frontend/dist/
+build/
+release/
+backend/static/
+*.zip
+*.whl
+*.tar.gz
+*.egg-info/
 
 # Sonstiges
 .DS_Store

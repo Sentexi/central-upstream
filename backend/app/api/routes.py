@@ -1,6 +1,6 @@
 from flask import jsonify, request
 from . import api_bp
-from app.core.module_registry import get_manifests
+from ..core.module_registry import get_manifests
 from app.core.settings_registry import get_all_providers, get_provider
 from app.core.settings_storage import settings_storage
 

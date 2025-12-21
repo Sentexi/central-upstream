@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel", "setuptools_scm[toml]>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "central-upstream"
+description = "Central Upstream web app (Flask + React build served as static)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Andrey" }]
+dynamic = ["version"]
+
+dependencies = [
+  "flask>=3.0",
+  "gunicorn>=21.2",
+  "python-dotenv>=1.0",
+  # falls ihr CORS nutzt:
+  # "flask-cors>=4.0",
+]
+
+[tool.setuptools_scm]
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+exclude = ["frontend*", "deploy*", "dist*", "build*", "release*"]

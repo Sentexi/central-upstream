@@ -31,6 +31,36 @@ body {
   line-height: 1.6;
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 48px 24px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.input-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.form-error {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: #fecaca;
+  font-size: 13px;
+}
+
 .app-shell {
   position: relative;
   padding: 48px 24px 64px 0;

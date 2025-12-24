@@ -5,6 +5,7 @@ import { getWidgetsForSlot, matchActiveModules } from "./core/moduleRegistry";
 import { SettingsPage } from "./settings/SettingsPage";
 
 type View = "today" | "work" | "dashboard" | "health" | "fitness" | "calories" | "settings";
+type AuthStatus = "checking" | "unauthenticated" | "authenticated";
 
 type HealthSyncStatus = {
   syncing: boolean;
@@ -35,14 +36,25 @@ function App() {
   const [view, setView] = useState<View>("today");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [healthStatus, setHealthStatus] = useState<HealthSyncStatus>({ syncing: false });
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [mustChangeCredentials, setMustChangeCredentials] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/modules")
-      .then((r) => r.json())
-      .then((data) => setManifests(data))
-      .catch((err) => {
-        console.error("Failed to load module manifests", err);
-        setManifests([]);
+    fetch("/api/auth/me")
+      .then(async (r) => {
+        if (!r.ok) {
+          throw new Error("Unauthorized");
+        }
+        return r.json();
+      })
+      .then((data) => {
+        setAuthStatus("authenticated");
+        setMustChangeCredentials(Boolean(data.must_change));
+      })
+      .catch(() => {
+        setAuthStatus("unauthenticated");
+        setMustChangeCredentials(false);
       });
   }, []);
 
@@ -60,11 +72,15 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (authStatus !== "authenticated" || mustChangeCredentials) {
+      return;
+    }
+
     fetchHealthStatus();
-  }, [fetchHealthStatus]);
+  }, [authStatus, fetchHealthStatus, mustChangeCredentials]);
 
   useEffect(() => {
-    if (!healthStatus.syncing) {
+    if (authStatus !== "authenticated" || mustChangeCredentials || !healthStatus.syncing) {
       return undefined;
     }
 
@@ -73,7 +89,104 @@ function App() {
     }, 1500);
 
     return () => window.clearInterval(interval);
-  }, [fetchHealthStatus, healthStatus.syncing]);
+  }, [authStatus, fetchHealthStatus, healthStatus.syncing, mustChangeCredentials]);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated" || mustChangeCredentials) {
+      return;
+    }
+
+    fetch("/api/modules")
+      .then((r) => r.json())
+      .then((data) => setManifests(data))
+      .catch((err) => {
+        console.error("Failed to load module manifests", err);
+        setManifests([]);
+      });
+  }, [authStatus, mustChangeCredentials]);
+
+  const handleLogin = async (username: string, password: string) => {
+    setAuthError(null);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Login failed.");
+      }
+
+      setAuthStatus("authenticated");
+      setMustChangeCredentials(Boolean(data.must_change));
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Login failed.");
+      setAuthStatus("unauthenticated");
+    }
+  };
+
+  const handleChangeCredentials = async (
+    currentPassword: string,
+    username: string,
+    password: string
+  ) => {
+    setAuthError(null);
+    try {
+      const response = await fetch("/api/auth/change-credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: currentPassword, username, password }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Update failed.");
+      }
+
+      setMustChangeCredentials(Boolean(data.must_change));
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Update failed.");
+    }
+  };
+
+  if (authStatus === "checking") {
+    return (
+      <div className="auth-screen">
+        <GlassCard className="auth-card">
+          <div className="section-heading">Checking access</div>
+          <p className="card-description">Authentifizierung wird geprüft…</p>
+        </GlassCard>
+      </div>
+    );
+  }
+
+  if (authStatus === "unauthenticated") {
+    return (
+      <div className="auth-screen">
+        <GlassCard className="auth-card" glow>
+          <div className="section-heading">Login</div>
+          <p className="card-description">Bitte melde dich an, um fortzufahren.</p>
+          <AuthLoginForm onSubmit={handleLogin} error={authError} />
+        </GlassCard>
+      </div>
+    );
+  }
+
+  if (mustChangeCredentials) {
+    return (
+      <div className="auth-screen">
+        <GlassCard className="auth-card" glow stressLevel="high">
+          <div className="section-heading">Passwort ändern</div>
+          <p className="card-description">
+            Bitte ändere den Standard-Login, bevor du fortfährst.
+          </p>
+          <ChangeCredentialsForm onSubmit={handleChangeCredentials} error={authError} />
+        </GlassCard>
+      </div>
+    );
+  }
 
   const activeModules = manifests ? matchActiveModules(manifests) : [];
   const todayWidgets = getWidgetsForSlot(activeModules, "today_view");
@@ -432,6 +545,112 @@ function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+type AuthFormProps = {
+  onSubmit: (username: string, password: string) => void;
+  error: string | null;
+};
+
+function AuthLoginForm({ onSubmit, error }: AuthFormProps) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("admin");
+
+  return (
+    <form
+      className="auth-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(username, password);
+      }}
+    >
+      <label className="input-label" htmlFor="login-username">
+        Benutzername
+      </label>
+      <input
+        id="login-username"
+        className="input"
+        type="text"
+        value={username}
+        onChange={(event) => setUsername(event.target.value)}
+        autoComplete="username"
+      />
+      <label className="input-label" htmlFor="login-password">
+        Passwort
+      </label>
+      <input
+        id="login-password"
+        className="input"
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        autoComplete="current-password"
+      />
+      {error && <div className="form-error">{error}</div>}
+      <button className="button" type="submit">
+        Login
+      </button>
+    </form>
+  );
+}
+
+type ChangeCredentialsFormProps = {
+  onSubmit: (currentPassword: string, username: string, password: string) => void;
+  error: string | null;
+};
+
+function ChangeCredentialsForm({ onSubmit, error }: ChangeCredentialsFormProps) {
+  const [currentPassword, setCurrentPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <form
+      className="auth-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(currentPassword, username, password);
+      }}
+    >
+      <label className="input-label" htmlFor="current-password">
+        Aktuelles Passwort
+      </label>
+      <input
+        id="current-password"
+        className="input"
+        type="password"
+        value={currentPassword}
+        onChange={(event) => setCurrentPassword(event.target.value)}
+        autoComplete="current-password"
+      />
+      <label className="input-label" htmlFor="new-username">
+        Neuer Benutzername
+      </label>
+      <input
+        id="new-username"
+        className="input"
+        type="text"
+        value={username}
+        onChange={(event) => setUsername(event.target.value)}
+        autoComplete="username"
+      />
+      <label className="input-label" htmlFor="new-password">
+        Neues Passwort
+      </label>
+      <input
+        id="new-password"
+        className="input"
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        autoComplete="new-password"
+      />
+      {error && <div className="form-error">{error}</div>}
+      <button className="button" type="submit">
+        Zugang aktualisieren
+      </button>
+    </form>
   );
 }
 

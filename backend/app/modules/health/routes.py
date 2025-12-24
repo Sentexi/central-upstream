@@ -129,6 +129,13 @@ def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
 def get_settings():
     ingest_path = "/api/health/ingest"
     ingest_url = urljoin(request.url_root, ingest_path.lstrip("/"))
+    curl_example = (
+        "curl -X POST "
+        f"\"{ingest_url}\" "
+        "-H \"Content-Type: application/json\" "
+        "-H \"X-API-Key: <dein-key>\" "
+        "-d @export.json"
+    )
 
     return jsonify(
         {
@@ -136,6 +143,8 @@ def get_settings():
             "module_name": "Health",
             "ingest_path": ingest_path,
             "ingest_url": ingest_url,
+            "auth_header": "X-API-Key",
+            "curl_example": curl_example,
             "hint": "Trage diese URL in der Auto Export App ein, um Health-Daten per POST zu senden.",
         }
     )

@@ -1,4 +1,5 @@
-from flask import Flask, jsonify, request, session
+import os
+from flask import Flask, jsonify, request, send_from_directory, session
 from .core.config import load_config
 from .core.module_registry import discover_modules, init_all_modules
 from .core.settings_registry import discover_settings_providers
@@ -8,7 +9,15 @@ from .api.auth import auth_bp
 from .api.routes import api_bp
 
 def create_app():
-    app = Flask(__name__)
+    package_root = os.path.dirname(os.path.dirname(__file__))
+    static_root = os.path.join(package_root, "static")
+
+    app = Flask(
+        __name__,
+        root_path=os.getcwd(),
+        static_folder=static_root,
+        static_url_path="/",
+    )
     load_config(app)
 
     settings_storage.init_app(app)
@@ -38,5 +47,16 @@ def create_app():
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.route("/")
+    def index():
+        return send_from_directory(app.static_folder, "index.html")
+
+    @app.route("/<path:path>")
+    def spa(path):
+        full = os.path.join(app.static_folder, path)
+        if os.path.exists(full):
+            return send_from_directory(app.static_folder, path)
+        return send_from_directory(app.static_folder, "index.html")
 
     return app

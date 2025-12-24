@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -21,12 +22,16 @@ class NormalizedRecord:
 
 
 class HealthRepository:
+    API_KEY_TABLE = "health_api_keys"
+    DEFAULT_API_KEY_NAME = "X-API-Key"
+
     def __init__(self, db_path: str, table_schemas: Optional[Dict[str, List[str]]] = None):
         self.db_path = db_path
         directory = os.path.dirname(self.db_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
         self._ensure_metadata_table()
+        self._ensure_api_key_table()
         self._summary_cache: Dict[Tuple[str, str], List[dict]] = {}
         self._fitness_cache: Dict[Tuple[str, str], List[dict]] = {}
         self._fitness_weekly_cache: Dict[Tuple[str, str], List[dict]] = {}
@@ -55,6 +60,43 @@ class HealthRepository:
                 """
             )
             conn.commit()
+
+    def _ensure_api_key_table(self):
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.API_KEY_TABLE} (
+                    name TEXT PRIMARY KEY,
+                    api_key TEXT NOT NULL
+                )
+                """
+            )
+            row = conn.execute(
+                f"SELECT name, api_key FROM {self.API_KEY_TABLE} LIMIT 1"
+            ).fetchone()
+            if row is None:
+                api_key = secrets.token_urlsafe(32)
+                conn.execute(
+                    f"INSERT INTO {self.API_KEY_TABLE} (name, api_key) VALUES (?, ?)",
+                    (self.DEFAULT_API_KEY_NAME, api_key),
+                )
+            conn.commit()
+
+    def get_ingest_api_key(self) -> tuple[str, str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT name, api_key FROM {self.API_KEY_TABLE} LIMIT 1"
+            ).fetchone()
+            if row is None:
+                api_key = secrets.token_urlsafe(32)
+                name = self.DEFAULT_API_KEY_NAME
+                conn.execute(
+                    f"INSERT INTO {self.API_KEY_TABLE} (name, api_key) VALUES (?, ?)",
+                    (name, api_key),
+                )
+                conn.commit()
+                return name, api_key
+            return str(row["name"]), str(row["api_key"])
 
     def _table_name_for_type(self, data_type: str) -> str:
         slug = re.sub(r"[^a-z0-9_]+", "_", data_type.lower())

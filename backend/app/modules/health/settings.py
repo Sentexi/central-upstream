@@ -2,6 +2,7 @@ from urllib.parse import urljoin
 
 from flask import request
 
+from .routes import _get_repository
 from ...core.settings_provider import ModuleSettingsProvider, SettingsField
 
 
@@ -12,6 +13,7 @@ class HealthSettingsProvider(ModuleSettingsProvider):
     def get_settings_schema(self) -> list[SettingsField]:
         ingest_path = "/api/health/ingest"
         ingest_url = urljoin(request.url_root, ingest_path.lstrip("/")) if request else ingest_path
+        api_header, api_key = _get_repository().get_ingest_api_key()
 
         return [
             {
@@ -30,6 +32,24 @@ class HealthSettingsProvider(ModuleSettingsProvider):
                 "required": False,
                 "default": ingest_path,
                 "help_text": "Nur lesend – kopiere den Pfad, falls du die Basis-URL manuell setzen musst.",
+                "read_only": True,
+            },
+            {
+                "key": "ingest_api_header",
+                "label": "API Header",
+                "type": "string",
+                "required": False,
+                "default": api_header,
+                "help_text": "Header-Name für den Ingest.",
+                "read_only": True,
+            },
+            {
+                "key": "ingest_api_key",
+                "label": "API Key",
+                "type": "string",
+                "required": False,
+                "default": api_key,
+                "help_text": "Diesen Key beim Ingest mitgeben.",
                 "read_only": True,
             },
         ]

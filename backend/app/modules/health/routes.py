@@ -4,6 +4,7 @@ import json
 import math
 import os
 from datetime import date, datetime, timedelta, timezone
+from hmac import compare_digest
 from statistics import median, pstdev
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
@@ -97,6 +98,22 @@ def _get_repository() -> HealthRepository:
     return repo
 
 
+def _extract_api_key(header_name: str) -> str:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.removeprefix("Bearer ").strip()
+    return request.headers.get(header_name, "").strip()
+
+
+def _has_valid_ingest_key() -> bool:
+    repo = _get_repository()
+    header_name, expected_key = repo.get_ingest_api_key()
+    provided_key = _extract_api_key(header_name)
+    if not expected_key or not provided_key:
+        return False
+    return compare_digest(provided_key, expected_key)
+
+
 def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
     cached = current_app.extensions.get("health_table_schemas")  # type: ignore[attr-defined]
     if cached is not None:
@@ -129,11 +146,12 @@ def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
 def get_settings():
     ingest_path = "/api/health/ingest"
     ingest_url = urljoin(request.url_root, ingest_path.lstrip("/"))
+    api_header, api_key = _get_repository().get_ingest_api_key()
     curl_example = (
         "curl -X POST "
         f"\"{ingest_url}\" "
         "-H \"Content-Type: application/json\" "
-        "-H \"X-API-Key: <dein-key>\" "
+        f"-H \"{api_header}: {api_key}\" "
         "-d @export.json"
     )
 
@@ -143,7 +161,8 @@ def get_settings():
             "module_name": "Health",
             "ingest_path": ingest_path,
             "ingest_url": ingest_url,
-            "auth_header": "X-API-Key",
+            "auth_header": api_header,
+            "auth_key": api_key,
             "curl_example": curl_example,
             "hint": "Trage diese URL in der Auto Export App ein, um Health-Daten per POST zu senden.",
         }
@@ -176,6 +195,9 @@ def get_sync_status():
 
 @bp.post("/ingest")
 def ingest():
+    if not _has_valid_ingest_key():
+        return jsonify({"ok": False, "error": "Unauthorized."}), 401
+
     payload = request.get_json(silent=True) or {}
 
     if _has_current_payload():

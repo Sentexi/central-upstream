@@ -122,6 +122,58 @@ function renderField(
   );
 }
 
+const formatLastSync = (value: string | null) => {
+  if (!value) return "noch kein Sync";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+};
+
+const formatStatusValue = (
+  statusMeta: SettingsModuleSchema["status"],
+  payload: unknown
+) => {
+  if (!statusMeta) return "Status";
+
+  const lookupValue =
+    statusMeta.value_key && payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)[statusMeta.value_key]
+      : payload;
+
+  if (statusMeta.formatter === "datetime") {
+    return formatLastSync((lookupValue as string | null) ?? null);
+  }
+
+  if (lookupValue === undefined || lookupValue === null) {
+    return "Keine Statusdaten";
+  }
+
+  if (typeof lookupValue === "object") {
+    return JSON.stringify(lookupValue);
+  }
+
+  return String(lookupValue);
+};
+
+const parseSyncStatus = (
+  value: unknown,
+  stageLabels?: Record<string, string>
+): StatusProgress => {
+  if (value === undefined || value === null) {
+    return { processed: 0, total: 0, percent: 0, stage: undefined };
+  }
+
+  const total = Number((value as { total_records?: number }).total_records ?? 0);
+  const processed = Number(
+    (value as { processed_records?: number }).processed_records ?? 0
+  );
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const stageKey = (value as { stage?: string | null }).stage ?? undefined;
+  const stage = stageKey ? stageLabels?.[stageKey] ?? stageKey : undefined;
+
+  return { processed, total, percent, stage };
+};
+
 export function SettingsPage() {
   const [modules, setModules] = useState<SettingsModuleSchema[]>([]);
   const [values, setValues] = useState<SettingsValueMap>({});
@@ -165,58 +217,6 @@ export function SettingsPage() {
 
     bootstrap();
   }, []);
-
-  const formatLastSync = (value: string | null) => {
-    if (!value) return "noch kein Sync";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleString();
-  };
-
-  const formatStatusValue = (
-    statusMeta: SettingsModuleSchema["status"],
-    payload: unknown
-  ) => {
-    if (!statusMeta) return "Status";
-
-    const lookupValue =
-      statusMeta.value_key && payload && typeof payload === "object"
-        ? (payload as Record<string, unknown>)[statusMeta.value_key]
-        : payload;
-
-    if (statusMeta.formatter === "datetime") {
-      return formatLastSync((lookupValue as string | null) ?? null);
-    }
-
-    if (lookupValue === undefined || lookupValue === null) {
-      return "Keine Statusdaten";
-    }
-
-    if (typeof lookupValue === "object") {
-      return JSON.stringify(lookupValue);
-    }
-
-    return String(lookupValue);
-  };
-
-  const parseSyncStatus = (
-    value: unknown,
-    stageLabels?: Record<string, string>
-  ): StatusProgress => {
-    if (value === undefined || value === null) {
-      return { processed: 0, total: 0, percent: 0, stage: undefined };
-    }
-
-    const total = Number((value as { total_records?: number }).total_records ?? 0);
-    const processed = Number(
-      (value as { processed_records?: number }).processed_records ?? 0
-    );
-    const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    const stageKey = (value as { stage?: string | null }).stage ?? undefined;
-    const stage = stageKey ? stageLabels?.[stageKey] ?? stageKey : undefined;
-
-    return { processed, total, percent, stage };
-  };
 
   const fetchStatuses = useCallback(
     async (options?: { modules?: SettingsModuleSchema[] }) => {
@@ -273,7 +273,7 @@ export function SettingsPage() {
         })
       );
     },
-    [formatStatusValue, modules]
+    [modules]
   );
 
   useEffect(() => {

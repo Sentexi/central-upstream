@@ -37,4 +37,4 @@ python -m pip install --force-reinstall --no-cache-dir "$WHEEL"
 export PYTHONPATH="$APP_DIR"
 
 # Gunicorn Starttarget ggf. anpassen:
-exec gunicorn -w "${WEB_CONCURRENCY:-2}" -k gthread -b "0.0.0.0:${PORT}" backend.app:app
+exec gunicorn -w "${WEB_CONCURRENCY:-2}" -k gthread -b "0.0.0.0:${PORT}" "backend.app:create_app()"

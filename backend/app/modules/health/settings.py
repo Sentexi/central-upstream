@@ -1,3 +1,4 @@
+import sqlite3
 from urllib.parse import urljoin
 
 from flask import request
@@ -13,7 +14,15 @@ class HealthSettingsProvider(ModuleSettingsProvider):
     def get_settings_schema(self) -> list[SettingsField]:
         ingest_path = "/api/health/ingest"
         ingest_url = urljoin(request.url_root, ingest_path.lstrip("/")) if request else ingest_path
-        api_header, api_key = _get_repository().get_ingest_api_key()
+        try:
+            api_header, api_key = _get_repository().get_ingest_api_key()
+            syncing = False
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            api_header = "syncing"
+            api_key = "syncing"
+            syncing = True
 
         return [
             {
@@ -49,7 +58,9 @@ class HealthSettingsProvider(ModuleSettingsProvider):
                 "type": "string",
                 "required": False,
                 "default": api_key,
-                "help_text": "Diesen Key beim Ingest mitgeben.",
+                "help_text": "Diesen Key beim Ingest mitgeben."
+                if not syncing
+                else "Sync läuft, API Key wird nach Abschluss angezeigt.",
                 "read_only": True,
             },
         ]

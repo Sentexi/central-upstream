@@ -167,6 +167,7 @@ def list_rows():
     for rels in relations.values():
         for entries in rels.values():
             to_page_ids.update(entry.get("to_page_id") for entry in entries if entry.get("to_page_id"))
+    relation_cache = repo.get_relation_cache(to_page_ids)
     cached_targets = repo.get_cached_pages(to_page_ids)
 
     for row in rows:
@@ -179,11 +180,13 @@ def list_rows():
                 column_base = entry_column or column_base
             links: List[Dict[str, Optional[str]]] = []
             for entry in sorted(entries, key=lambda e: e.get("position", 0)):
-                target = cached_targets.get(entry.get("to_page_id")) or {}
-                title = target.get("title") or entry.get("to_page_id") or "…"
+                relation_id = entry.get("to_page_id")
+                cached_relation = relation_cache.get(relation_id) or {}
+                target = cached_targets.get(relation_id) or {}
+                title = cached_relation.get("value") or target.get("title") or relation_id or "…"
                 links.append(
                     {
-                        "id": entry.get("to_page_id"),
+                        "id": relation_id,
                         "title": title,
                         "url": target.get("url"),
                     }

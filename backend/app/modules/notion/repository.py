@@ -137,18 +137,17 @@ class NotionRepository:
                 rel.get("property_value"),
                 rel.get("to_page_id"),
                 rel.get("position", 0),
-                rel.get("value"),
             )
             for rel in relations
         ]
         with self._connect() as conn:
-            conn.execute("DELETE FROM notion_relations WHERE from_page_id = ?", (page_id,))
+            conn.execute("DELETE FROM notion_page_relations WHERE from_page_id = ?", (page_id,))
             if rows:
                 conn.executemany(
                     """
-                    INSERT OR REPLACE INTO notion_relations
-                    (from_page_id, property_name, property_value, to_page_id, position, value)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO notion_page_relations
+                    (from_page_id, property_name, property_value, to_page_id, position)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     rows,
                 )
@@ -162,8 +161,8 @@ class NotionRepository:
             return {}
         placeholders = ",".join(["?"] * len(page_ids))
         sql = (
-            f"SELECT from_page_id, property_name, property_value, to_page_id, position, value "
-            f"FROM notion_relations WHERE from_page_id IN ({placeholders})"
+            f"SELECT from_page_id, property_name, property_value, to_page_id, position "
+            f"FROM notion_page_relations WHERE from_page_id IN ({placeholders})"
             " ORDER BY position"
         )
         with self._connect() as conn:
@@ -178,7 +177,6 @@ class NotionRepository:
                     "to_page_id": row["to_page_id"],
                     "position": row["position"],
                     "property_value": row["property_value"],
-                    "value": row["value"],
                 }
             )
         return relations
@@ -207,6 +205,7 @@ class NotionRepository:
                 to_page_ids.extend(
                     [entry.get("to_page_id") for entry in entries if entry.get("to_page_id")]
                 )
+        relation_cache = self.get_relation_cache(to_page_ids)
         cached_targets = self.get_cached_pages(to_page_ids)
 
         updates: List[Tuple[Any, ...]] = []
@@ -228,9 +227,11 @@ class NotionRepository:
                     continue
                 relation_values: List[Optional[str]] = []
                 for entry in sorted(entries, key=lambda e: e.get("position", 0)):
-                    target = cached_targets.get(entry.get("to_page_id")) or {}
-                    title = target.get("title") or ""
-                    relation_value = entry.get("value") or title or entry.get("to_page_id")
+                    relation_id = entry.get("to_page_id")
+                    cached_relation = relation_cache.get(relation_id) or {}
+                    target = cached_targets.get(relation_id) or {}
+                    title = cached_relation.get("value") or target.get("title") or ""
+                    relation_value = title or relation_id
                     relation_values.append(relation_value)
                 if relation_values:
                     row_updates[column_name] = json.dumps(relation_values)
@@ -261,6 +262,16 @@ class NotionRepository:
             rows = conn.execute(sql, id_list).fetchall()
         return {row["id"]: dict(row) for row in rows}
 
+    def get_relation_cache(self, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        id_list = list(ids)
+        if not id_list:
+            return {}
+        placeholders = ",".join(["?"] * len(id_list))
+        sql = f"SELECT * FROM notion_relations WHERE to_page_id IN ({placeholders})"
+        with self._connect() as conn:
+            rows = conn.execute(sql, id_list).fetchall()
+        return {row["to_page_id"]: dict(row) for row in rows}
+
     def filter_missing_or_stale_targets(
         self, ids: Iterable[str], max_age_days: int = 7
     ) -> List[str]:
@@ -284,6 +295,41 @@ class NotionRepository:
             if not synced_dt or synced_dt < cutoff:
                 missing.append(page_id)
         return missing
+
+    def filter_missing_or_stale_relations(
+        self, ids: Iterable[str], max_age_days: int = 7
+    ) -> List[str]:
+        id_list = list(ids)
+        if not id_list:
+            return []
+
+        cached = self.get_relation_cache(id_list)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        missing: List[str] = []
+        for page_id in id_list:
+            entry = cached.get(page_id)
+            if not entry:
+                missing.append(page_id)
+                continue
+            synced_at = entry.get("synced_at")
+            try:
+                synced_dt = datetime.fromisoformat(synced_at.replace("Z", "+00:00")) if synced_at else None
+            except ValueError:
+                synced_dt = None
+            if not synced_dt or synced_dt < cutoff:
+                missing.append(page_id)
+        return missing
+
+    def upsert_relation_cache(self, page_id: str, value: Optional[str], synced_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO notion_relations (to_page_id, value, synced_at)
+                VALUES (?, ?, ?)
+                """,
+                (page_id, value, synced_at),
+            )
+            conn.commit()
 
     def upsert_page_cache(
         self,

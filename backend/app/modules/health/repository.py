@@ -420,6 +420,27 @@ class HealthRepository:
                         """
                     )
 
+            if self._table_exists(conn, "health_sleep_analysis"):
+                sleep_columns = set(self._existing_columns(conn, "health_sleep_analysis"))
+                if {"inbedend", "totalsleep"}.issubset(sleep_columns):
+                    conn.execute(
+                        """
+                        DELETE FROM health_sleep_analysis
+                        WHERE id IN (
+                            SELECT id FROM (
+                                SELECT id,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY inbedend
+                                           ORDER BY totalsleep DESC, batch_ts DESC, id DESC
+                                       ) AS rn
+                                FROM health_sleep_analysis
+                                WHERE inbedend IS NOT NULL
+                            )
+                            WHERE rn > 1
+                        )
+                        """
+                    )
+
             conn.commit()
 
         # Deduplizierung kann aggregierte Abfragen verändern

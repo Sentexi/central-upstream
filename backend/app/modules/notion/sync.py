@@ -129,7 +129,6 @@ def _extract_relations_from_page(
                     "property_value": property_value,
                     "to_page_id": to_page_id,
                     "position": idx,
-                    "value": to_page_id,
                 }
             )
             targets.add(to_page_id)
@@ -158,6 +157,11 @@ def _resolve_relation_targets(
         try:
             page = client.retrieve_page(page_id)
             title = _extract_page_title(page)
+            repo.upsert_relation_cache(
+                page_id=page_id,
+                value=title or page_id,
+                synced_at=synced_at,
+            )
             repo.upsert_page_cache(
                 page_id=page_id,
                 title=title or page_id,
@@ -295,7 +299,7 @@ def run_full_sync(progress_callback: Optional[Callable[[str, int, int], None]] =
         if progress_callback:
             progress_callback("syncing", upserted_count, total_pages)
 
-    missing_relation_targets = repo.filter_missing_or_stale_targets(relation_targets)
+    missing_relation_targets = repo.filter_missing_or_stale_relations(relation_targets)
     if missing_relation_targets:
         _resolve_relation_targets(client, repo, missing_relation_targets)
 

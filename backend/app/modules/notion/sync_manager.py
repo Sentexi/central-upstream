@@ -16,6 +16,7 @@ class NotionSyncManager:
             "processed": 0,
             "total": 0,
             "mode": "refresh",
+            "stage": None,
             "error": None,
             "result": None,
             "started_at": None,
@@ -35,6 +36,7 @@ class NotionSyncManager:
                     "processed": 0,
                     "total": 0,
                     "mode": "full" if force_full else "refresh",
+                    "stage": "downloading",
                     "error": None,
                     "started_at": datetime.utcnow().isoformat() + "Z",
                     "finished_at": None,
@@ -47,10 +49,11 @@ class NotionSyncManager:
 
     def _run_sync(self, app, force_full: bool) -> None:  # pragma: no cover - background worker
         with app.app_context():
-            def _report_progress(processed: int, total: int) -> None:
+            def _report_progress(stage: str, processed: int, total: int) -> None:
                 with self._lock:
                     self._state["processed"] = processed
                     self._state["total"] = total
+                    self._state["stage"] = stage
 
             result: SyncResult = run_full_sync(progress_callback=_report_progress)
 

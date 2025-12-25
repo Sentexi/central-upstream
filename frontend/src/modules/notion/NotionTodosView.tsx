@@ -210,6 +210,7 @@ export function NotionTodosView() {
   const syncTotal = syncStatus?.total ?? 0;
   const syncProcessed = syncStatus?.processed ?? 0;
   const syncProgress = syncTotal > 0 ? Math.min(100, Math.round((syncProcessed / syncTotal) * 100)) : 0;
+  const syncStage = syncStatus?.stage ?? null;
 
   return (
     <GlassCard glow className="notion-todos">
@@ -237,12 +238,19 @@ export function NotionTodosView() {
         <div className="sync-progress" role="status" aria-live="polite">
           <div className="sync-progress__labels">
             <span className="muted small">
-              Syncing {syncProcessed}/{syncTotal || "?"} tasks
+              {syncStage === "downloading"
+                ? "Downloading pages from Notion…"
+                : `Syncing ${syncProcessed}/${syncTotal || "?"} tasks`}
             </span>
-            <span className="muted small">{syncProgress}%</span>
+            <span className="muted small">
+              {syncStage === "downloading" ? "0%" : `${syncProgress}%`}
+            </span>
           </div>
           <div className="progress-bar">
-            <div className="progress-bar__fill" style={{ width: `${syncProgress}%` }} />
+            <div
+              className="progress-bar__fill"
+              style={{ width: `${syncStage === "downloading" ? 0 : syncProgress}%` }}
+            />
           </div>
         </div>
       )}

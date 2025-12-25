@@ -26,6 +26,7 @@ export type SyncStatus = {
   processed: number;
   total: number;
   mode: "full" | "refresh";
+  stage?: "downloading" | "syncing" | null;
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;

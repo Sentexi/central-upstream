@@ -174,7 +174,7 @@ def _resolve_relation_targets(
             executor.submit(fetch_and_store, pid)
 
 
-def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None) -> SyncResult:
+def run_full_sync(progress_callback: Optional[Callable[[str, int, int], None]] = None) -> SyncResult:
     start_time = time.time()
     settings = _load_settings()
     token = settings.get("notion_api_key")
@@ -262,6 +262,8 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     repo.ensure_wide_table(property_map)
 
     try:
+        if progress_callback:
+            progress_callback("downloading", 0, 0)
         pages = list(query_iter)
     except PermissionError as exc:
         return _result(False, f"Zugriff verweigert beim Lesen aus {source_label}: {exc}")
@@ -270,7 +272,7 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
 
     total_pages = len(pages)
     if progress_callback:
-        progress_callback(0, total_pages)
+        progress_callback("syncing", 0, total_pages)
 
     relation_targets: Set[str] = set()
 
@@ -291,7 +293,7 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
         relation_targets.update(targets)
         upserted_count += 1
         if progress_callback:
-            progress_callback(upserted_count, total_pages)
+            progress_callback("syncing", upserted_count, total_pages)
 
     missing_relation_targets = repo.filter_missing_or_stale_targets(relation_targets)
     if missing_relation_targets:

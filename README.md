@@ -55,11 +55,16 @@ sudo apt install -y unzip python3-venv
 mkdir -p /opt/central-upstream && cd /opt/central-upstream
 
 ## download release asset (replace OWNER/REPO + TAG)
-curl -L -o release_bundle.zip "https://github.com/sentexi/central-upstream/releases/download/v0.1.3/release_bundle.zip"
 
+```
+curl -L -o release_bundle.zip "https://github.com/sentexi/central-upstream/releases/download/vX.X.X/release_bundle.zip"
+```
+
+```
 unzip -o release_bundle.zip
 cp .env.example .env
-
+```
+```
 chmod +x run.sh
 ./run.sh
-
+```

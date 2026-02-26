@@ -198,6 +198,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">Zum Inhalt springen</a>
       <div className="noise-overlay" aria-hidden />
       <div className={`layout-grid ${isSidebarOpen ? "" : "sidebar-collapsed"}`}>
         <aside className={`sidebar ${isSidebarOpen ? "is-open" : "is-collapsed"}`}>
@@ -219,23 +220,23 @@ function App() {
               className={`nav-item ${view === "today" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("today")}
-              aria-label="Today"
+              aria-label="Heute"
             >
               <span className="nav-icon" aria-hidden>
                 ⏺
               </span>
-              <span className="nav-label">Today</span>
+              <span className="nav-label">Heute</span>
             </button>
             <button
               className={`nav-item ${view === "work" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("work")}
-              aria-label="Work"
+              aria-label="Arbeit"
             >
               <span className="nav-icon" aria-hidden>
                 ✅
               </span>
-              <span className="nav-label">Work</span>
+              <span className="nav-label">Arbeit</span>
             </button>
             <button
               className={`nav-item ${view === "dashboard" ? "active" : ""}`.trim()}
@@ -252,15 +253,15 @@ function App() {
               className={`nav-item ${view === "health" ? "active" : ""} ${healthStatus.syncing ? "is-syncing" : ""}`.trim()}
               type="button"
               onClick={() => setView("health")}
-              aria-label="Health"
+              aria-label="Gesundheit"
             >
               <span className="nav-icon" aria-hidden>
                 ❤️
               </span>
-              <span className="nav-label">Health</span>
+              <span className="nav-label">Gesundheit</span>
               {healthStatus.syncing && (
                 <span className="nav-status">
-                  Syncing{healthStatus.stage ? ` (${healthStatus.stage})` : ""}
+                  Sync{healthStatus.stage ? ` (${healthStatus.stage})` : " läuft"}
                 </span>
               )}
             </button>
@@ -279,64 +280,63 @@ function App() {
               className={`nav-item ${view === "calories" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("calories")}
-              aria-label="Calories"
+              aria-label="Kalorien"
             >
               <span className="nav-icon" aria-hidden>
                 🥗
               </span>
-              <span className="nav-label">Calories</span>
+              <span className="nav-label">Kalorien</span>
             </button>
             <button
               className={`nav-item ${view === "settings" ? "active" : ""}`.trim()}
               type="button"
               onClick={() => setView("settings")}
-              aria-label="Settings"
+              aria-label="Einstellungen"
             >
               <span className="nav-icon" aria-hidden>
                 ⚙
               </span>
-              <span className="nav-label">Settings</span>
+              <span className="nav-label">Einstellungen</span>
             </button>
           </nav>
           <div className="sidebar-footer" aria-live="polite">
             <span className="signal" aria-hidden />
             <span className="sidebar-status-text">
               {manifests === null
-                ? "Module Registry lädt..."
+                ? "Module werden geladen..."
                 : `${activeModules.length} Module verbunden`}
             </span>
           </div>
         </aside>
 
-        <main className="content-area">
+        <main className="content-area" id="main-content">
           {view === "today" ? (
             <div className="app-grid">
               <header className="app-header">
                 <span className="kicker">Central Upstream</span>
-                <h1 className="title">System Operator</h1>
+                <h1 className="title">Tagesübersicht</h1>
                 <p className="subtitle">
-                  Dark Glass UI mit Electric-Blue Akzenten. Dein Control Center für heutige
-                  Tasks.
+                  Dein Control Center für heutige Aufgaben und aktive Module.
                 </p>
                 <div className="status" aria-live="polite">
                   <span className="signal" aria-hidden />
                   <span>
                     {manifests === null
-                      ? "Module Registry lädt..."
+                      ? "Module werden geladen..."
                       : `${activeModules.length} Module verbunden`}
                   </span>
                 </div>
               </header>
 
               <section className="stack">
-                <div className="section-heading">Today</div>
+                <div className="section-heading">Heute</div>
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Aktive Module und Integrationen werden synchronisiert.
                       </p>
                     </GlassCard>
                   )}
@@ -344,15 +344,17 @@ function App() {
                   {manifests && todayWidgets.length === 0 && (
                     <GlassCard>
                       <div className="kicker">Keine Module aktiv</div>
-                      <h3 className="card-title">Installiere dein erstes Modul</h3>
+                      <h3 className="card-title">Erstes Modul einrichten</h3>
                       <p className="card-description">
-                        Verbinde Integrationen, aktiviere ein Modul und es erscheint hier in der
-                        Today-Ansicht.
+                        Verbinde eine Integration in den Einstellungen, um hier deine Tagesansicht zu sehen.
                       </p>
-                      <div className="pill">
-                        <span className="dot" aria-hidden />
-                        Quick Capture, Health, Mail
-                      </div>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
 
@@ -365,29 +367,36 @@ function App() {
           ) : view === "work" ? (
             <div className="app-grid">
               <header className="app-header">
-                <span className="kicker">Work</span>
-                <h1 className="title">Focus &amp; Projects</h1>
+                <span className="kicker">Arbeit</span>
+                <h1 className="title">Fokus &amp; Projekte</h1>
                 <p className="subtitle">Eine zentrale Sicht auf deine synchronisierten Aufgaben.</p>
               </header>
               <section className="stack">
-                <div className="section-heading">Work Dashboard</div>
+                <div className="section-heading">Aufgaben-Dashboard</div>
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Aktive Module und Integrationen werden synchronisiert.
                       </p>
                     </GlassCard>
                   )}
                   {manifests && workWidgets.length === 0 && (
                     <GlassCard>
-                      <div className="kicker">Keine Work-Module aktiv</div>
-                      <h3 className="card-title">Aktiviere die Notion Sync</h3>
+                      <div className="kicker">Keine Arbeits-Module aktiv</div>
+                      <h3 className="card-title">Notion Sync einrichten</h3>
                       <p className="card-description">
-                        Nach der Konfiguration erscheinen hier deine synchronisierten Aufgaben.
+                        Verbinde Notion in den Einstellungen, um hier deine Aufgaben zu sehen.
                       </p>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
                   {workWidgets.map((mod, i) =>
@@ -400,30 +409,37 @@ function App() {
             <div className="app-grid">
               <header className="app-header">
                 <span className="kicker">Dashboard</span>
-                <h1 className="title">Flow &amp; Trends</h1>
+                <h1 className="title">Verlauf &amp; Trends</h1>
                 <p className="subtitle">
                   Überblick über Erledigungen, Inflow und aktive Arbeitszeiten deiner Aufgaben.
                 </p>
               </header>
               <section className="stack">
-                <div className="section-heading">Task Dashboards</div>
+                <div className="section-heading">Aufgaben-Dashboards</div>
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Aktive Module und Integrationen werden synchronisiert.
                       </p>
                     </GlassCard>
                   )}
                   {manifests && dashboardWidgets.length === 0 && (
                     <GlassCard>
                       <div className="kicker">Keine Dashboard-Module aktiv</div>
-                      <h3 className="card-title">Aktiviere eine Integration</h3>
+                      <h3 className="card-title">Integration einrichten</h3>
                       <p className="card-description">
-                        Verbinde ein Modul mit Dashboard-Slot, um hier Daten zu sehen.
+                        Verbinde ein Modul in den Einstellungen, um hier Auswertungen zu sehen.
                       </p>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
                   {dashboardWidgets.map((mod, i) =>
@@ -435,7 +451,7 @@ function App() {
           ) : view === "health" ? (
             <div className="app-grid">
               <header className="app-header">
-                <span className="kicker">Health</span>
+                <span className="kicker">Gesundheit</span>
                 <h1 className="title">Energy Monitor</h1>
                 <p className="subtitle">Verdichtete Tagesmetrik, Readiness-Barometer &amp; Trends.</p>
               </header>
@@ -444,20 +460,27 @@ function App() {
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Gesundheitsdaten werden synchronisiert.
                       </p>
                     </GlassCard>
                   )}
                   {manifests && healthWidgets.length === 0 && (
                     <GlassCard>
-                      <div className="kicker">Kein Health-Modul aktiv</div>
-                      <h3 className="card-title">Aktiviere den Energy Monitor</h3>
+                      <div className="kicker">Kein Gesundheits-Modul aktiv</div>
+                      <h3 className="card-title">Energy Monitor einrichten</h3>
                       <p className="card-description">
-                        Nach der Health-Sync erscheint hier die neue Energy Monitor Ansicht.
+                        Verbinde deine Gesundheitsdaten in den Einstellungen, um den Energy Monitor zu nutzen.
                       </p>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
                   {healthWidgets.map((mod, i) =>
@@ -469,10 +492,10 @@ function App() {
           ) : view === "fitness" ? (
             <div className="app-grid">
               <header className="app-header">
-                <span className="kicker">Health</span>
+                <span className="kicker">Gesundheit</span>
                 <h1 className="title">Fitness Dashboard</h1>
                 <p className="subtitle">
-                  Weekly Volume, Consistency, Efficiency und Mobility Trends mit einem Toggle nach Range.
+                  Trainingsvolumen, Konsistenz, Effizienz und Mobilität im Überblick.
                 </p>
               </header>
               <section className="stack">
@@ -480,21 +503,27 @@ function App() {
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Fitnessdaten werden synchronisiert.
                       </p>
                     </GlassCard>
                   )}
                   {manifests && fitnessWidgets.length === 0 && (
                     <GlassCard>
                       <div className="kicker">Kein Fitness-Dashboard aktiv</div>
-                      <h3 className="card-title">Aktiviere das Health-Modul</h3>
+                      <h3 className="card-title">Gesundheits-Modul einrichten</h3>
                       <p className="card-description">
-                        Nach der Health-Sync erscheint hier das neue Fitness Dashboard mit Volume, Consistency und
-                        Efficiency.
+                        Verbinde deine Fitnessdaten in den Einstellungen, um Volumen, Konsistenz und Effizienz zu sehen.
                       </p>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
                   {fitnessWidgets.map((mod, i) =>
@@ -506,31 +535,38 @@ function App() {
           ) : view === "calories" ? (
             <div className="app-grid">
               <header className="app-header">
-                <span className="kicker">Wellbeing</span>
-                <h1 className="title">Calories &amp; Vape</h1>
+                <span className="kicker">Wohlbefinden</span>
+                <h1 className="title">Kalorien &amp; Tracking</h1>
                 <p className="subtitle">
-                  Plain-Text Capture, Draft Review, Importe und Vape-Counter in einer konsolidierten Ansicht.
+                  Erfasse Mahlzeiten per Text, prüfe Entwürfe und behalte den Überblick.
                 </p>
               </header>
               <section className="stack">
-                <div className="section-heading">Calories</div>
+                <div className="section-heading">Kalorien</div>
                 <div className="grid-cards">
                   {manifests === null && (
                     <GlassCard glow className="loader">
-                      <span className="kicker">Booting</span>
-                      <h3 className="card-title">Module Registry wird geladen</h3>
+                      <span className="kicker">Laden</span>
+                      <h3 className="card-title">Module werden vorbereitet</h3>
                       <p className="card-description">
-                        Wir synchronisieren die aktiven Slots. Glass Cards pulsen statt Spinner.
+                        Kalorien-Modul wird synchronisiert.
                       </p>
                     </GlassCard>
                   )}
                   {manifests && caloriesWidgets.length === 0 && (
                     <GlassCard>
-                      <div className="kicker">Kein Calories-Modul aktiv</div>
-                      <h3 className="card-title">Aktiviere das Calories-Modul</h3>
+                      <div className="kicker">Kein Kalorien-Modul aktiv</div>
+                      <h3 className="card-title">Kalorien-Tracking einrichten</h3>
                       <p className="card-description">
-                        Hinterlege einen LLM-Key in den Settings, um Kalorien und Vape zu erfassen.
+                        Hinterlege einen LLM-Key in den Einstellungen, um Kalorien per Texteingabe zu erfassen.
                       </p>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setView("settings")}
+                      >
+                        Zu den Einstellungen
+                      </button>
                     </GlassCard>
                   )}
                   {caloriesWidgets.map((mod, i) =>
@@ -554,8 +590,8 @@ type AuthFormProps = {
 };
 
 function AuthLoginForm({ onSubmit, error }: AuthFormProps) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   return (
     <form
@@ -601,7 +637,7 @@ type ChangeCredentialsFormProps = {
 };
 
 function ChangeCredentialsForm({ onSubmit, error }: ChangeCredentialsFormProps) {
-  const [currentPassword, setCurrentPassword] = useState("admin");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 

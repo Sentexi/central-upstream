@@ -307,11 +307,13 @@ export function CaloriesView() {
   };
 
   const deleteDraft = async (id: number) => {
+    if (!window.confirm("Diesen Entwurf wirklich löschen?")) return;
     await fetch(`/api/calories/drafts/${id}`, { method: "DELETE" });
     await loadDrafts();
   };
 
   const deleteEntry = async (id: number) => {
+    if (!window.confirm("Diesen Eintrag wirklich löschen?")) return;
     await fetch(`/api/calories/entry/${id}`, { method: "DELETE" });
     if (selectedDay) {
       loadDayEntries(selectedDay);
@@ -408,10 +410,10 @@ export function CaloriesView() {
                 onClick={handleSubmit}
                 disabled={submitting || disableInput}
               >
-                {submitting ? "Wird verarbeitet..." : "LLM &amp; Drafts erstellen"}
+                {submitting ? "Wird verarbeitet..." : "Analysieren & Entwürfe erstellen"}
               </button>
               <button className="button secondary" type="button" onClick={loadDrafts}>
-                Drafts refreshen
+                Entwürfe aktualisieren
               </button>
             </div>
           </div>
@@ -422,12 +424,12 @@ export function CaloriesView() {
         <GlassCard className="chart-panel">
           <div className="chart-panel__header">
             <div>
-              <span className="kicker">Drafts</span>
-              <h3 className="card-title">Extrahierte Items</h3>
+              <span className="kicker">Entwürfe</span>
+              <h3 className="card-title">Extrahierte Einträge</h3>
             </div>
           </div>
           {drafts.length === 0 ? (
-            <p className="muted">Keine Drafts vorhanden.</p>
+            <p className="muted">Keine Entwürfe vorhanden.</p>
           ) : (
             <div className="draft-grid">
               {drafts.map((draft) => (
@@ -461,14 +463,14 @@ export function CaloriesView() {
                   </div>
                   <div className="inline-fields">
                     <button className="button" onClick={() => acceptDraft(draft.id)} type="button">
-                      Accept
+                      Übernehmen
                     </button>
                     <button
                       className="button tertiary"
                       onClick={() => deleteDraft(draft.id)}
                       type="button"
                     >
-                      Delete
+                      Löschen
                     </button>
                   </div>
                 </div>
@@ -480,8 +482,8 @@ export function CaloriesView() {
         <GlassCard className="chart-panel">
           <div className="chart-panel__header">
             <div>
-              <span className="kicker">Calories</span>
-              <h3 className="card-title">Stacked Tagesbalken</h3>
+              <span className="kicker">Kalorien</span>
+              <h3 className="card-title">Tagesübersicht</h3>
             </div>
             <div className="chart-controls">
               {RANGE_OPTIONS.map((opt) => (
@@ -549,8 +551,8 @@ export function CaloriesView() {
         <GlassCard className="chart-panel">
           <div className="chart-panel__header">
             <div>
-              <span className="kicker">Entries</span>
-              <h3 className="card-title">Items am {formatDate(selectedDay)}</h3>
+              <span className="kicker">Einträge</span>
+              <h3 className="card-title">Einträge am {formatDate(selectedDay)}</h3>
             </div>
             <button className="button tertiary" onClick={() => setSelectedDay(null)} type="button">
               Schließen
@@ -561,7 +563,7 @@ export function CaloriesView() {
           ) : (
             <div className="table">
               <div className="table-head">
-                <div>Name</div>
+                <div>Bezeichnung</div>
                 <div>Kcal</div>
                 <div>Makros</div>
                 <div>Status</div>
@@ -587,7 +589,7 @@ export function CaloriesView() {
                       type="button"
                       onClick={() => deleteEntry(entry.id)}
                     >
-                      Delete
+                      Löschen
                     </button>
                   </div>
                 </div>
@@ -664,8 +666,8 @@ export function CaloriesView() {
         <GlassCard className="chart-panel">
           <div className="chart-panel__header">
             <div>
-              <span className="kicker">Imports</span>
-              <h3 className="card-title">JSON Upload</h3>
+              <span className="kicker">Importe</span>
+              <h3 className="card-title">JSON-Datei hochladen</h3>
             </div>
           </div>
           <label className="manual-import__controls">
@@ -681,17 +683,17 @@ export function CaloriesView() {
                 event.target.value = "";
               }}
             />
-            <span className="muted small">Lade ein Array von Entries hoch (JSON).</span>
+            <span className="muted small">Lade eine JSON-Datei mit Einträgen hoch.</span>
           </label>
           {importError && <div className="settings-error">{importError}</div>}
           <div className="table import-table">
             <div className="table-head">
-              <div>Batch</div>
+              <div>Import-ID</div>
               <div>Anzahl</div>
               <div>Zeitraum</div>
             </div>
             {imports.length === 0 ? (
-              <div className="muted small">Noch keine Imports vorhanden.</div>
+              <div className="muted small">Noch keine Importe vorhanden.</div>
             ) : (
               imports.map((imp) => (
                 <div className="table-row" key={imp.import_batch_id}>

@@ -44,18 +44,18 @@ export function QuickCaptureWidget() {
 
   return (
     <GlassCard glow className="quick-capture">
-      <span className="kicker">Work</span>
+      <span className="kicker">Arbeit</span>
       <div className="pill">
         <span className="dot" aria-hidden />
-        Quick Capture
+        Schnellerfassung
       </div>
-      <h3 className="card-title">Stoppuhr-Momente festhalten</h3>
+      <h3 className="card-title">Aufgaben schnell festhalten</h3>
       <p className="card-description">
-        Schnelles Eingabefeld ohne Reibung. Die Tasks erscheinen sofort in deiner
-        Today-Card.
+        Schnelles Eingabefeld ohne Umwege. Die Aufgaben erscheinen sofort in deiner
+        Tagesansicht.
       </p>
 
-      <form onSubmit={handleSubmit} className="stack" aria-label="Quick capture form">
+      <form onSubmit={handleSubmit} className="stack" aria-label="Schnellerfassung">
         <div className="input-row">
           <input
             className="input"
@@ -63,20 +63,20 @@ export function QuickCaptureWidget() {
             value={newText}
             onChange={(e) => setNewText(e.target.value)}
             placeholder="Was muss passieren?"
-            aria-label="Neuen Task eintragen"
+            aria-label="Neue Aufgabe eintragen"
           />
           <button className="button" type="submit">
-            Add
+            Hinzufügen
           </button>
         </div>
-        <span className="muted">Enter drückt sofort speichern.</span>
+        <span className="muted">Enter drücken zum Speichern.</span>
       </form>
 
-      {loading && <p className="muted">Loading tasks...</p>}
+      {loading && <p className="muted">Aufgaben werden geladen...</p>}
       {error && <p className="badge-alert">{error}</p>}
 
       {!loading && tasks.length === 0 && !error && (
-        <p className="muted">Noch keine Tasks – starte mit dem ersten Eintrag.</p>
+        <p className="muted">Noch keine Aufgaben – starte mit dem ersten Eintrag.</p>
       )}
 
       {tasks.length > 0 && (

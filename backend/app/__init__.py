@@ -1,5 +1,6 @@
 import os
 from flask import Flask, jsonify, request, send_from_directory, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 from .core.config import load_config
 from .core.module_registry import discover_modules, init_all_modules
 from .core.settings_registry import discover_settings_providers
@@ -7,6 +8,16 @@ from .core.settings_storage import settings_storage
 from .core.user_storage import user_storage
 from .api.auth import auth_bp
 from .api.routes import api_bp
+
+
+def _proxy_hops() -> int:
+    raw = os.getenv("PROXY_HOPS", "1").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 1
+    return max(0, value)
+
 
 def create_app():
     package_root = os.path.dirname(os.path.dirname(__file__))
@@ -20,10 +31,15 @@ def create_app():
     )
     load_config(app)
 
+    hops = _proxy_hops()
+    if hops > 0:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app, x_for=hops, x_proto=hops, x_host=hops, x_prefix=hops
+        )
+
     settings_storage.init_app(app)
     user_storage.init_app(app)
 
-    # API-Routen registrieren
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
 
@@ -37,9 +53,9 @@ def create_app():
             return None
         if not session.get("user_id"):
             return jsonify({"ok": False, "error": "Unauthorized."}), 401
+        session.permanent = True
         return None
 
-    # Module entdecken & initialisieren
     discover_modules()
     init_all_modules(app)
     discover_settings_providers()

@@ -15,8 +15,7 @@ dependencies = [
   "flask>=3.0",
   "gunicorn>=21.2",
   "python-dotenv>=1.0",
-  # falls ihr CORS nutzt:
-  # "flask-cors>=4.0",
+  "requests>=2.31",
 ]
 
 [tool.setuptools_scm]

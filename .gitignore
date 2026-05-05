@@ -6,9 +6,13 @@ __pycache__/
 
 # Data
 backend/app/data/
+data/
+.secret_key
+.initial_admin_password
 
 # Settings
 backend/app/settings.sqlite
+backend/app/users.sqlite
 
 # venv (lokal, nicht ins Repo)
 venv/

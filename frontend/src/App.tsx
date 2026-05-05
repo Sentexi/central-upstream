@@ -554,8 +554,8 @@ type AuthFormProps = {
 };
 
 function AuthLoginForm({ onSubmit, error }: AuthFormProps) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   return (
     <form
@@ -601,7 +601,7 @@ type ChangeCredentialsFormProps = {
 };
 
 function ChangeCredentialsForm({ onSubmit, error }: ChangeCredentialsFormProps) {
-  const [currentPassword, setCurrentPassword] = useState("admin");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 

@@ -142,31 +142,68 @@ def _load_table_schemas() -> Optional[Dict[str, set[str]]]:
     return table_schemas
 
 
-@bp.get("/settings")
-def get_settings():
+def _mask_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def _settings_payload(reveal: bool = False, override_api_key: Optional[str] = None) -> Dict[str, Any]:
     ingest_path = "/api/health/ingest"
     ingest_url = urljoin(request.url_root, ingest_path.lstrip("/"))
     api_header, api_key = _get_repository().get_ingest_api_key()
-    curl_example = (
+    if override_api_key is not None:
+        api_key = override_api_key
+
+    curl_template = (
         "curl -X POST "
         f"\"{ingest_url}\" "
         "-H \"Content-Type: application/json\" "
-        f"-H \"{api_header}: {api_key}\" "
+        f"-H \"{api_header}: <api-key>\" "
         "-d @export.json"
     )
 
-    return jsonify(
-        {
-            "module_id": "health",
-            "module_name": "Health",
-            "ingest_path": ingest_path,
-            "ingest_url": ingest_url,
-            "auth_header": api_header,
-            "auth_key": api_key,
-            "curl_example": curl_example,
-            "hint": "Trage diese URL in der Auto Export App ein, um Health-Daten per POST zu senden.",
-        }
-    )
+    payload: Dict[str, Any] = {
+        "module_id": "health",
+        "module_name": "Health",
+        "ingest_path": ingest_path,
+        "ingest_url": ingest_url,
+        "auth_header": api_header,
+        "auth_key_preview": _mask_api_key(api_key),
+        "auth_key_set": bool(api_key),
+        "curl_template": curl_template,
+        "reveal_endpoint": "/api/health/settings/api-key/reveal",
+        "rotate_endpoint": "/api/health/settings/api-key/rotate",
+        "hint": "Trage diese URL in der Auto Export App ein. Den Schluessel kannst du ueber Anzeigen oder Rotieren abrufen.",
+    }
+    if reveal:
+        payload["auth_key"] = api_key
+        payload["curl_example"] = (
+            "curl -X POST "
+            f"\"{ingest_url}\" "
+            "-H \"Content-Type: application/json\" "
+            f"-H \"{api_header}: {api_key}\" "
+            "-d @export.json"
+        )
+    return payload
+
+
+@bp.get("/settings")
+def get_settings():
+    return jsonify(_settings_payload(reveal=False))
+
+
+@bp.post("/settings/api-key/reveal")
+def reveal_api_key():
+    return jsonify(_settings_payload(reveal=True))
+
+
+@bp.post("/settings/api-key/rotate")
+def rotate_api_key():
+    _, new_key = _get_repository().rotate_ingest_api_key()
+    return jsonify(_settings_payload(reveal=True, override_api_key=new_key))
 
 
 @bp.get("/status")

@@ -98,6 +98,21 @@ class HealthRepository:
                 return name, api_key
             return str(row["name"]), str(row["api_key"])
 
+    def rotate_ingest_api_key(self) -> tuple[str, str]:
+        api_key = secrets.token_urlsafe(32)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT name FROM {self.API_KEY_TABLE} LIMIT 1"
+            ).fetchone()
+            name = str(row["name"]) if row else self.DEFAULT_API_KEY_NAME
+            conn.execute(f"DELETE FROM {self.API_KEY_TABLE}")
+            conn.execute(
+                f"INSERT INTO {self.API_KEY_TABLE} (name, api_key) VALUES (?, ?)",
+                (name, api_key),
+            )
+            conn.commit()
+        return name, api_key
+
     def _table_name_for_type(self, data_type: str) -> str:
         slug = re.sub(r"[^a-z0-9_]+", "_", data_type.lower())
         if not slug:

@@ -6,6 +6,8 @@ import type {
   SettingsValueMap,
 } from "../core/types";
 
+const REDACTED_PLACEHOLDER = "__stored__";
+
 type StatusState = "idle" | "saving" | "error" | "success" | "syncing";
 
 type StatusProgress = {
@@ -23,33 +25,52 @@ type StatusEntry = {
 
 type StatusMap = Record<string, StatusEntry>; // keyed by module_id
 
+type StoredSecretsMap = Record<string, Set<string>>;
+
 function getInitialValues(
   modules: SettingsModuleSchema[],
   stored: SettingsValueMap
-): SettingsValueMap {
-  const merged: SettingsValueMap = {};
+): { values: SettingsValueMap; stored_secrets: StoredSecretsMap } {
+  const values: SettingsValueMap = {};
+  const stored_secrets: StoredSecretsMap = {};
 
   modules.forEach((module) => {
     const current = stored[module.module_id] ?? {};
     const next: Record<string, unknown> = { ...current };
+    const secretFlags = new Set<string>();
 
     module.fields.forEach((field) => {
-      if (next[field.key] === undefined && field.default !== undefined) {
-        next[field.key] = field.default;
+      const isPassword = field.type === "password";
+      const incoming = next[field.key];
+      const looksRedacted =
+        typeof incoming === "string" && incoming === REDACTED_PLACEHOLDER;
+
+      if (isPassword && looksRedacted) {
+        secretFlags.add(field.key);
+        next[field.key] = "";
+      } else if (next[field.key] === undefined && field.default !== undefined) {
+        if (isPassword && field.default === REDACTED_PLACEHOLDER) {
+          secretFlags.add(field.key);
+          next[field.key] = "";
+        } else {
+          next[field.key] = field.default;
+        }
       }
     });
 
-    merged[module.module_id] = next;
+    values[module.module_id] = next;
+    stored_secrets[module.module_id] = secretFlags;
   });
 
-  return merged;
+  return { values, stored_secrets };
 }
 
 function renderField(
   field: SettingsField,
   value: unknown,
   onChange: (value: unknown) => void,
-  onFileSelect?: (file: File) => void
+  onFileSelect?: (file: File) => void,
+  hasStoredSecret = false
 ) {
   const isReadOnly = Boolean(field.read_only);
   const commonProps = {
@@ -111,12 +132,18 @@ function renderField(
 
   const inputType = field.type === "password" ? "password" : "text";
 
+  let placeholder = field.label;
+  if (field.type === "password" && hasStoredSecret) {
+    placeholder = "gespeichert, leer lassen um nicht zu aendern";
+  }
+
   return (
     <input
       className="input"
       type={inputType}
-      placeholder={field.label}
+      placeholder={placeholder}
       readOnly={isReadOnly}
+      autoComplete={field.type === "password" ? "new-password" : undefined}
       {...commonProps}
     />
   );
@@ -177,6 +204,7 @@ const parseSyncStatus = (
 export function SettingsPage() {
   const [modules, setModules] = useState<SettingsModuleSchema[]>([]);
   const [values, setValues] = useState<SettingsValueMap>({});
+  const [storedSecrets, setStoredSecrets] = useState<StoredSecretsMap>({});
   const [loading, setLoading] = useState(true);
   const [statuses, setStatuses] = useState<StatusMap>({});
   const [uploadingModule, setUploadingModule] = useState<string | null>(null);
@@ -196,7 +224,9 @@ export function SettingsPage() {
 
         const loadedModules: SettingsModuleSchema[] = schemaData.modules ?? [];
         setModules(loadedModules);
-        setValues(getInitialValues(loadedModules, valueData));
+        const initial = getInitialValues(loadedModules, valueData);
+        setValues(initial.values);
+        setStoredSecrets(initial.stored_secrets);
 
         const successStatuses: StatusMap = {};
         loadedModules.forEach((module) => {
@@ -376,21 +406,41 @@ export function SettingsPage() {
 
   const validateLocally = (module: SettingsModuleSchema) => {
     const moduleValues = values[module.module_id] ?? {};
+    const moduleSecrets = storedSecrets[module.module_id] ?? new Set<string>();
     const missing = module.fields
       .filter((f) => f.required)
       .filter((f) => {
         const val = moduleValues[f.key];
-        return val === undefined || val === null || val === "";
+        const isEmpty = val === undefined || val === null || val === "";
+        if (!isEmpty) return false;
+        return !moduleSecrets.has(f.key);
       });
 
     if (missing.length > 0) {
-      return (
+      return [
         false,
-        "Bitte fülle alle Pflichtfelder aus: " + missing.map((m) => m.label).join(", ")
-      );
+        "Bitte fuelle alle Pflichtfelder aus: " + missing.map((m) => m.label).join(", "),
+      ] as const;
     }
 
     return [true, ""] as const;
+  };
+
+  const buildPayload = (module: SettingsModuleSchema): Record<string, unknown> => {
+    const moduleValues = { ...(values[module.module_id] ?? {}) };
+    const moduleSecrets = storedSecrets[module.module_id] ?? new Set<string>();
+    module.fields.forEach((field) => {
+      if (field.type !== "password") return;
+      const incoming = moduleValues[field.key];
+      const isEmpty =
+        incoming === undefined ||
+        incoming === null ||
+        (typeof incoming === "string" && incoming.trim() === "");
+      if (isEmpty && moduleSecrets.has(field.key)) {
+        moduleValues[field.key] = REDACTED_PLACEHOLDER;
+      }
+    });
+    return moduleValues;
   };
 
   const validateAndSave = async (module: SettingsModuleSchema) => {
@@ -401,13 +451,13 @@ export function SettingsPage() {
     }
 
     setStatus(module.module_id, "saving", "Teste und speichere...");
-    const moduleValues = values[module.module_id] ?? {};
+    const payload = buildPayload(module);
 
     try {
       const validateRes = await fetch(`/api/settings/${module.module_id}/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(moduleValues),
+        body: JSON.stringify(payload),
       });
       const validateData = await validateRes.json();
 
@@ -419,7 +469,7 @@ export function SettingsPage() {
       const saveRes = await fetch(`/api/settings/${module.module_id}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(moduleValues),
+        body: JSON.stringify(payload),
       });
 
       const saveData = await saveRes.json();
@@ -507,23 +557,30 @@ export function SettingsPage() {
                     </div>
                   </div>
                 )}
-                {module.fields.map((field) => (
-                  <label className="settings-field" key={`${module.module_id}-${field.key}`}>
-                    <div className="settings-field__meta">
-                      <span className="settings-label">
-                        {field.label}
-                        {field.required && <span className="required">*</span>}
-                      </span>
-                      {field.help_text && <span className="muted">{field.help_text}</span>}
-                    </div>
-                    {renderField(
-                      field,
-                      moduleValues[field.key],
-                      (val) => handleChange(module.module_id, field.key, val),
-                      field.type === "file" ? (file) => handleFileUpload(module, file) : undefined
-                    )}
-                  </label>
-                ))}
+                {module.fields.map((field) => {
+                  const moduleSecrets = storedSecrets[module.module_id];
+                  const hasStoredSecret = Boolean(
+                    field.type === "password" && moduleSecrets?.has(field.key)
+                  );
+                  return (
+                    <label className="settings-field" key={`${module.module_id}-${field.key}`}>
+                      <div className="settings-field__meta">
+                        <span className="settings-label">
+                          {field.label}
+                          {field.required && <span className="required">*</span>}
+                        </span>
+                        {field.help_text && <span className="muted">{field.help_text}</span>}
+                      </div>
+                      {renderField(
+                        field,
+                        moduleValues[field.key],
+                        (val) => handleChange(module.module_id, field.key, val),
+                        field.type === "file" ? (file) => handleFileUpload(module, file) : undefined,
+                        hasStoredSecret
+                      )}
+                    </label>
+                  );
+                })}
 
                 {module.manual_import && (
                   <div className="manual-import">

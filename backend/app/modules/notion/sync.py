@@ -199,8 +199,26 @@ def _resolve_relation_targets(
             executor.submit(fetch_and_store, pid)
 
 
-def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None) -> SyncResult:
-    start_time = time.time()
+class _PreparedSync(Dict):
+    repo: NotionRepository
+    client: NotionClient
+    property_map: Dict[str, Dict[str, str]]
+    source_label: str
+    using_data_source: bool
+    data_source_id: Optional[str]
+    database_id: str
+    version: str
+
+
+def _prepare_sync_context() -> Tuple[Optional[_PreparedSync], Optional[str]]:
+    """Lade Settings, oeffne Repo und Client, waehle Data Source, ziehe Schema.
+
+    Gibt entweder ``(context, None)`` zurueck oder ``(None, error_message)``.
+    Der Aufrufer baut darauf seinen Query-Loop. Properties werden als Schema
+    geschrieben und Wide-Table sichergestellt, sodass beide Sync-Pfade auf
+    aktuelles Schema vertrauen koennen.
+    """
+
     settings = _load_settings()
     token = settings.get("notion_api_key")
     database_id = settings.get("notion_database_id")
@@ -209,26 +227,13 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     version = settings.get("notion_api_version") or DEFAULT_NOTION_VERSION
     version = DEFAULT_NOTION_VERSION if version != DEFAULT_NOTION_VERSION else version
 
-    fetched_count = 0
-    upserted_count = 0
-
-    def _result(ok: bool, error: Optional[str] = None) -> SyncResult:
-        return SyncResult(
-            ok=ok,
-            mode="full",
-            fetched_count=fetched_count,
-            upserted_count=upserted_count,
-            duration_ms=int((time.time() - start_time) * 1000),
-            error=error,
-        )
-
     missing_fields = []
     if not token:
         missing_fields.append("API Key")
     if not database_id:
         missing_fields.append("Database ID")
     if missing_fields:
-        return _result(False, f"Notion Einstellungen unvollständig: {', '.join(missing_fields)} fehlen.")
+        return None, f"Notion Einstellungen unvollständig: {', '.join(missing_fields)} fehlen."
 
     repo = _get_repository()
     client = NotionClient(token, base_url, version)
@@ -236,14 +241,14 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     try:
         database_id = _ensure_database_id(repo, database_id)
     except Exception as exc:
-        return _result(False, f"Fehler beim Prüfen der Database ID: {exc}")
+        return None, f"Fehler beim Prüfen der Database ID: {exc}"
 
     try:
         database = client.retrieve_database(database_id)
     except PermissionError as exc:
-        return _result(False, f"Notion API Zugriff verweigert für Database {database_id}: {exc}")
+        return None, f"Notion API Zugriff verweigert für Database {database_id}: {exc}"
     except Exception as exc:
-        return _result(False, f"Fehler beim Laden der Notion Database {database_id}: {exc}")
+        return None, f"Fehler beim Laden der Notion Database {database_id}: {exc}"
 
     if not data_source_name:
         data_source_name = (repo.get_meta("data_source_name") or "").strip()
@@ -251,12 +256,14 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     try:
         chosen_data_source = _select_data_source(database, repo, data_source_name or None)
     except Exception as exc:
-        return _result(False, str(exc))
+        return None, str(exc)
 
     using_data_source = bool(chosen_data_source and chosen_data_source.get("id"))
     if chosen_data_source and not chosen_data_source.get("id"):
-        return _result(False, "Gewählte Data Source enthält keine ID.")
+        return None, "Gewählte Data Source enthält keine ID."
 
+    data_source_id: Optional[str] = None
+    source_label = f"Database {database_id}"
     try:
         if using_data_source:
             data_source_id = chosen_data_source.get("id")
@@ -267,26 +274,67 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
 
             data_source = client.retrieve_data_source(data_source_id)
             properties = data_source.get("properties", {})
-            query_iter = client.query_data_source(data_source_id)
         else:
-            source_label = f"Database {database_id}"
             repo.set_meta("data_source_id", "")
             if chosen_data_source and chosen_data_source.get("name"):
                 repo.set_meta("data_source_name", chosen_data_source.get("name"))
-
             properties = database.get("properties", {})
-            query_iter = client.query_database(database_id)
     except PermissionError as exc:
-        return _result(False, f"Notion API Zugriff verweigert für {source_label}: {exc}")
+        return None, f"Notion API Zugriff verweigert für {source_label}: {exc}"
     except Exception as exc:
-        return _result(False, f"Fehler beim Vorbereiten des Sync ({source_label}): {exc}")
+        return None, f"Fehler beim Vorbereiten des Sync ({source_label}): {exc}"
 
     property_map = _build_property_map(properties)
     repo.save_schema_json(properties)
     repo.save_property_map(property_map)
     repo.ensure_wide_table(property_map)
 
+    context = _PreparedSync(
+        repo=repo,
+        client=client,
+        property_map=property_map,
+        source_label=source_label,
+        using_data_source=using_data_source,
+        data_source_id=data_source_id,
+        database_id=database_id,
+        version=version,
+    )
+    return context, None
+
+
+def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None) -> SyncResult:
+    start_time = time.time()
+    fetched_count = 0
+    upserted_count = 0
+
+    def _result(ok: bool, error: Optional[str] = None, mode: str = "full") -> SyncResult:
+        return SyncResult(
+            ok=ok,
+            mode=mode,
+            fetched_count=fetched_count,
+            upserted_count=upserted_count,
+            duration_ms=int((time.time() - start_time) * 1000),
+            error=error,
+        )
+
+    context, error = _prepare_sync_context()
+    if error or context is None:
+        return _result(False, error or "Sync-Vorbereitung fehlgeschlagen")
+
+    repo = context["repo"]
+    client = context["client"]
+    property_map = context["property_map"]
+    source_label = context["source_label"]
+    using_data_source = context["using_data_source"]
+    data_source_id = context["data_source_id"]
+    database_id = context["database_id"]
+    version = context["version"]
+
     try:
+        if using_data_source:
+            query_iter = client.query_data_source(data_source_id)
+        else:
+            query_iter = client.query_database(database_id)
         pages = list(query_iter)
     except PermissionError as exc:
         return _result(False, f"Zugriff verweigert beim Lesen aus {source_label}: {exc}")
@@ -329,4 +377,4 @@ def run_full_sync(progress_callback: Optional[Callable[[int, int], None]] = None
     repo.set_meta("last_incremental_sync", now_iso)
     repo.set_meta("notion_api_version", version)
 
-    return _result(True, None)
+    return _result(True, None, mode="full")

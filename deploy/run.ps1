@@ -29,4 +29,4 @@ if (-not $Port) { $Port = "8000" }
 
 $env:PYTHONPATH = $AppDir
 
-& .\.venv\Scripts\gunicorn.exe -w 2 -k gthread -b "0.0.0.0:$Port" backend.app:app
+& .\.venv\Scripts\gunicorn.exe -w 2 -k gthread -b "0.0.0.0:$Port" "backend.app:create_app()"

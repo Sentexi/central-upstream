@@ -44,14 +44,15 @@ def _resolve_column(property_map: Dict[str, Dict[str, str]], candidates: List[st
 
 
 def _detect_done_statuses(repo: NotionRepository, status_col: Optional[str]) -> List[str]:
-    if not status_col:
+    safe_col = repo.safe_column(status_col)
+    if not safe_col:
         return []
 
     keywords = ["done", "complete", "closed", "finished", "resolved", "erledigt"]
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper
         rows = conn.execute(
-            f"SELECT DISTINCT {status_col} AS status FROM notion_rows WHERE {status_col} IS NOT NULL"
+            f"SELECT DISTINCT {safe_col} AS status FROM notion_rows WHERE {safe_col} IS NOT NULL"
         ).fetchall()
 
     statuses = [str(row["status"]) for row in rows if row["status"] is not None]
@@ -199,11 +200,13 @@ def list_filters():
     property_map = repo.get_property_map()
 
     def distinct(column: Optional[str]) -> List[str]:
-        if not column:
+        safe_col = repo.safe_column(column)
+        if not safe_col:
             return []
         with repo._connect() as conn:  # noqa: SLF001 - lightweight internal helper
             rows = conn.execute(
-                f"SELECT DISTINCT {column} as val FROM notion_rows WHERE {column} IS NOT NULL AND {column} != ''"
+                f"SELECT DISTINCT {safe_col} as val FROM notion_rows "
+                f"WHERE {safe_col} IS NOT NULL AND {safe_col} != ''"
             ).fetchall()
         return sorted([row["val"] for row in rows if row["val"] is not None])
 
@@ -224,14 +227,21 @@ def list_filters():
 def get_stats():
     repo = _get_repo()
     property_map = repo.get_property_map()
-    status_col = _resolve_column(property_map, ["status"])
-    workspace_col = _resolve_column(property_map, ["workspace", "area", "team"])
-    estimated_time_col = _resolve_column(
-        property_map,
-        ["estimated_time_min", "estimated_minutes", "time_estimate_min", "estimated_time"],
+    status_col = repo.safe_column(_resolve_column(property_map, ["status"]))
+    workspace_col = repo.safe_column(
+        _resolve_column(property_map, ["workspace", "area", "team"])
     )
-    completion_col = _resolve_column(
-        property_map, ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"]
+    estimated_time_col = repo.safe_column(
+        _resolve_column(
+            property_map,
+            ["estimated_time_min", "estimated_minutes", "time_estimate_min", "estimated_time"],
+        )
+    )
+    completion_col = repo.safe_column(
+        _resolve_column(
+            property_map,
+            ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"],
+        )
     )
     completion_expr = completion_col or "last_edited_time"
     time_expr = f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"

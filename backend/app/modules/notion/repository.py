@@ -1,13 +1,31 @@
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .schema import ensure_schema
 
 
+_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class UnsafeIdentifierError(ValueError):
+    """Raised when a column or table identifier fails validation."""
+
+
+def _validate_identifier(identifier: str) -> str:
+    """Reject anything that isn't a plain SQL identifier."""
+
+    if not isinstance(identifier, str) or not _IDENTIFIER_PATTERN.match(identifier):
+        raise UnsafeIdentifierError(f"Unsicherer Bezeichner: {identifier!r}")
+    return identifier
+
+
 class NotionRepository:
+    _ALLOWED_TABLES = {"notion_rows", "notion_page_cache", "notion_relations", "notion_meta"}
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -17,6 +35,30 @@ class NotionRepository:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def get_table_columns(self, table: str = "notion_rows") -> Set[str]:
+        """Return the live set of column names for a known table."""
+
+        if table not in self._ALLOWED_TABLES:
+            raise UnsafeIdentifierError(f"Unbekannte Tabelle: {table!r}")
+        with self._connect() as conn:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {row["name"] for row in rows}
+
+    def safe_column(self, column: Optional[str], table: str = "notion_rows") -> Optional[str]:
+        """Return the column name only if it is a real column of ``table``.
+
+        Returns ``None`` when ``column`` is ``None`` or unknown, raises
+        :class:`UnsafeIdentifierError` when the identifier is structurally
+        invalid. Callers must check for ``None`` before interpolating.
+        """
+
+        if column is None:
+            return None
+        _validate_identifier(column)
+        if column not in self.get_table_columns(table):
+            return None
+        return column
 
     # Meta helpers
     def get_meta(self, key: str) -> Optional[str]:
@@ -56,6 +98,14 @@ class NotionRepository:
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         return [row["name"] for row in rows]
 
+    _ALLOWED_SQLITE_TYPES = {"TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"}
+
+    def _safe_sqlite_type(self, sqlite_type: Optional[str]) -> str:
+        candidate = (sqlite_type or "TEXT").upper().strip()
+        if candidate not in self._ALLOWED_SQLITE_TYPES:
+            return "TEXT"
+        return candidate
+
     def ensure_wide_table(self, property_map: Dict[str, Dict[str, Any]]):
         existing = set(self._existing_columns("notion_rows"))
         base_columns = {
@@ -69,7 +119,11 @@ class NotionRepository:
         if missing_base:
             with self._connect() as conn:
                 for column in missing_base:
-                    conn.execute(f"ALTER TABLE notion_rows ADD COLUMN {column} {base_columns[column]}")
+                    safe_col = _validate_identifier(column)
+                    safe_type = self._safe_sqlite_type(base_columns[column])
+                    conn.execute(
+                        f"ALTER TABLE notion_rows ADD COLUMN {safe_col} {safe_type}"
+                    )
                 conn.commit()
             existing.update(missing_base)
 
@@ -77,8 +131,14 @@ class NotionRepository:
         for entry in property_map.values():
             column = entry.get("column")
             sqlite_type = entry.get("sqlite_type", "TEXT")
-            if column and column not in existing:
-                columns_to_add.append((column, sqlite_type))
+            if not column:
+                continue
+            try:
+                safe_col = _validate_identifier(column)
+            except UnsafeIdentifierError:
+                continue
+            if safe_col not in existing:
+                columns_to_add.append((safe_col, self._safe_sqlite_type(sqlite_type)))
 
         if columns_to_add:
             with self._connect() as conn:
@@ -115,7 +175,7 @@ class NotionRepository:
             conn.commit()
 
     def upsert_row(self, row_data: Dict[str, Any]):
-        columns = list(row_data.keys())
+        columns = [_validate_identifier(col) for col in row_data.keys()]
         placeholders = ":" + ", :".join(columns)
         column_clause = ", ".join(columns)
         update_clause = ", ".join([f"{col}=excluded.{col}" for col in columns if col != "id"])
@@ -235,7 +295,8 @@ class NotionRepository:
                 if relation_values:
                     row_updates[column_name] = json.dumps(relation_values)
             if row_updates:
-                columns_clause = ", ".join([f"{col} = ?" for col in row_updates.keys()])
+                safe_columns = [_validate_identifier(col) for col in row_updates.keys()]
+                columns_clause = ", ".join([f"{col} = ?" for col in safe_columns])
                 values = list(row_updates.values())
                 values.append(page_id)
                 updates.append((columns_clause, values))
@@ -326,12 +387,21 @@ class NotionRepository:
         where: List[str] = []
         params: List[Any] = []
 
-        text_columns = [entry.get("column") for entry in property_map.values() if entry.get("sqlite_type") == "TEXT"]
-        text_columns.extend(["url"])
+        valid_columns = self.get_table_columns("notion_rows")
 
-        if q and text_columns:
+        text_columns = [
+            entry.get("column")
+            for entry in property_map.values()
+            if entry.get("sqlite_type") == "TEXT"
+        ]
+        text_columns.extend(["url"])
+        safe_text_columns = [
+            col for col in text_columns if col and col in valid_columns
+        ]
+
+        if q and safe_text_columns:
             like = f"%{q}%"
-            clauses = [f"{col} LIKE ?" for col in text_columns if col]
+            clauses = [f"{col} LIKE ?" for col in safe_text_columns]
             where.append("(" + " OR ".join(clauses) + ")")
             params.extend([like] * len(clauses))
 
@@ -345,7 +415,7 @@ class NotionRepository:
                 column_name = label
                 notion_type = None
 
-            if not column_name:
+            if not column_name or column_name not in valid_columns:
                 continue
 
             if isinstance(value, dict) and ("from" in value or "to" in value):
@@ -377,8 +447,9 @@ class NotionRepository:
             if len(parts) == 2:
                 col, direction = parts
                 direction = direction.lower() in {"desc", "descending"}
-                column_name = property_map.get(col, {}).get("column") or col
-                order_clause = f"{column_name} {'DESC' if direction else 'ASC'}"
+                resolved = property_map.get(col, {}).get("column") or col
+                if resolved in valid_columns:
+                    order_clause = f"{resolved} {'DESC' if direction else 'ASC'}"
 
         sql = f"SELECT * FROM notion_rows WHERE {where_clause} ORDER BY {order_clause} LIMIT ? OFFSET ?"
         params_with_limit = params + [limit, offset]

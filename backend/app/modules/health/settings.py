@@ -15,14 +15,20 @@ class HealthSettingsProvider(ModuleSettingsProvider):
         ingest_path = "/api/health/ingest"
         ingest_url = urljoin(request.url_root, ingest_path.lstrip("/")) if request else ingest_path
         try:
-            api_header, api_key = _get_repository().get_ingest_api_key()
+            api_header, _ = _get_repository().get_ingest_api_key()
             syncing = False
         except sqlite3.OperationalError as exc:
             if "database is locked" not in str(exc).lower():
                 raise
             api_header = "syncing"
-            api_key = "syncing"
             syncing = True
+
+        api_key_help = (
+            "Wird aus Sicherheitsgruenden nicht direkt angezeigt. "
+            "Klicke Anzeigen oder Rotieren, um den Schluessel zu erhalten."
+        )
+        if syncing:
+            api_key_help = "Sync laeuft, der Schluessel kann gleich abgerufen werden."
 
         return [
             {
@@ -40,7 +46,7 @@ class HealthSettingsProvider(ModuleSettingsProvider):
                 "type": "string",
                 "required": False,
                 "default": ingest_path,
-                "help_text": "Nur lesend – kopiere den Pfad, falls du die Basis-URL manuell setzen musst.",
+                "help_text": "Nur lesend, kopiere den Pfad falls du die Basis-URL manuell setzen musst.",
                 "read_only": True,
             },
             {
@@ -49,18 +55,16 @@ class HealthSettingsProvider(ModuleSettingsProvider):
                 "type": "string",
                 "required": False,
                 "default": api_header,
-                "help_text": "Header-Name für den Ingest.",
+                "help_text": "Header-Name fuer den Ingest.",
                 "read_only": True,
             },
             {
                 "key": "ingest_api_key",
                 "label": "API Key",
-                "type": "string",
+                "type": "password",
                 "required": False,
-                "default": api_key,
-                "help_text": "Diesen Key beim Ingest mitgeben."
-                if not syncing
-                else "Sync läuft, API Key wird nach Abschluss angezeigt.",
+                "default": "",
+                "help_text": api_key_help,
                 "read_only": True,
             },
         ]

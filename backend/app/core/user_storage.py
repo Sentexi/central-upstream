@@ -1,8 +1,13 @@
+import logging
 import os
+import secrets
 import sqlite3
 from typing import Any, Dict, Optional
 
 from werkzeug.security import check_password_hash, generate_password_hash
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class UserStorage:
@@ -20,9 +25,12 @@ class UserStorage:
         if directory:
             os.makedirs(directory, exist_ok=True)
 
+        secret_dir = os.getenv("DATA_DIR") or os.path.join(app.root_path, "data")
+        os.makedirs(secret_dir, exist_ok=True)
+
         self.db_path = base_path
         self._ensure_schema()
-        self._ensure_default_user()
+        self._ensure_default_user(secret_dir)
 
     def _connect(self):
         if not self.db_path:
@@ -46,17 +54,43 @@ class UserStorage:
             )
             conn.commit()
 
-    def _ensure_default_user(self):
+    def _ensure_default_user(self, secret_dir: str):
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) as count FROM users").fetchone()
             if row and row["count"] > 0:
                 return
 
+            initial_password = secrets.token_urlsafe(18)
             conn.execute(
                 "INSERT INTO users (username, password_hash, must_change) VALUES (?, ?, ?)",
-                ("admin", generate_password_hash("admin"), 1),
+                ("admin", generate_password_hash(initial_password), 1),
             )
             conn.commit()
+
+        secret_path = os.path.join(secret_dir, ".initial_admin_password")
+        try:
+            with open(secret_path, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "username: admin\n"
+                    f"password: {initial_password}\n"
+                    "Bitte sofort nach dem ersten Login aendern und diese Datei loeschen.\n"
+                )
+            try:
+                os.chmod(secret_path, 0o600)
+            except OSError:
+                pass
+            _LOGGER.warning(
+                "Initialer Admin-Login generiert. Passwort liegt unter %s. "
+                "Bitte sofort nach dem ersten Login aendern und Datei loeschen.",
+                secret_path,
+            )
+        except OSError as exc:
+            _LOGGER.error(
+                "Konnte initiales Admin-Passwort nicht in %s speichern: %s. "
+                "Setze es ueber die DB oder via SECRET_KEY-Reset zurueck.",
+                secret_path,
+                exc,
+            )
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:

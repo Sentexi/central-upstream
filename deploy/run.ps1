@@ -29,4 +29,7 @@ if (-not $Port) { $Port = "8000" }
 
 $env:PYTHONPATH = $AppDir
 
-& .\.venv\Scripts\gunicorn.exe -w 2 -k gthread -b "0.0.0.0:$Port" "backend.app:create_app()"
+$Timeout = $env:GUNICORN_TIMEOUT
+if (-not $Timeout) { $Timeout = "600" }
+
+& .\.venv\Scripts\gunicorn.exe -w 2 -k gthread --timeout $Timeout -b "0.0.0.0:$Port" "backend.app:create_app()"

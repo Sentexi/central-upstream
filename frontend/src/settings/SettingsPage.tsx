@@ -5,6 +5,8 @@ import type {
   SettingsModuleSchema,
   SettingsValueMap,
 } from "../core/types";
+import { HealthForceClearButton } from "../modules/health/HealthForceClearButton";
+import { HealthSyncHistory } from "../modules/health/HealthSyncHistory";
 
 const REDACTED_PLACEHOLDER = "__stored__";
 
@@ -615,7 +617,17 @@ export function SettingsPage() {
                     {uploadError[module.module_id] && (
                       <div className="settings-error">{uploadError[module.module_id]}</div>
                     )}
+                    {module.module_id === "health" && (
+                      <HealthForceClearButton
+                        visible={status.state === "syncing" || status.state === "error"}
+                        onCleared={() => fetchStatuses({ modules: [module] })}
+                      />
+                    )}
                   </div>
+                )}
+
+                {module.module_id === "health" && (
+                  <HealthSyncHistory refreshKey={status.state} />
                 )}
               </div>
 

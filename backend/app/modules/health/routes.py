@@ -11,13 +11,17 @@ from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
 
-from .repository import HealthRepository, NormalizedRecord, _safe_divide
+from .repository import HealthRepository, NormalizedRecord, SyncBusyError, _safe_divide
 
 bp = Blueprint("health", __name__)
 
 
-LOCK_FILENAME = "health.lock"
-SYNC_STATUS_FILENAME = "sync_status.json"
+SYNC_STAGES = {
+    "normalizing": "Payload validieren",
+    "ingesting": "Import läuft",
+    "done": "Import abgeschlossen",
+    "error": "Fehler beim Import",
+}
 
 
 def _get_db_path() -> str:
@@ -28,62 +32,25 @@ def _get_db_path() -> str:
     return db_path
 
 
-def _get_lock_path() -> str:
-    db_path = _get_db_path()
-    directory = os.path.dirname(db_path) or current_app.root_path
-    os.makedirs(directory, exist_ok=True)
-    return os.path.join(directory, LOCK_FILENAME)
-
-
-def _get_sync_status_path() -> str:
-    db_path = _get_db_path()
-    directory = os.path.dirname(db_path) or current_app.root_path
-    os.makedirs(directory, exist_ok=True)
-    return os.path.join(directory, SYNC_STATUS_FILENAME)
-
-
-def _set_sync_lock(lock_path: str):
-    with open(lock_path, "w", encoding="utf-8") as fh:
-        fh.write(datetime.now(timezone.utc).isoformat())
-
-
-def _clear_sync_lock(lock_path: str):
-    try:
-        os.remove(lock_path)
-    except FileNotFoundError:
-        pass
-
-
-def _is_syncing() -> bool:
-    lock_path = _get_lock_path()
-    return os.path.exists(lock_path)
-
-
-def _read_sync_status() -> Dict[str, Any]:
-    default_status = {
-        "stage": None,
-        "total_records": 0,
-        "processed_records": 0,
-        "batch_timestamp": None,
+def _sync_status_payload(state: Dict[str, Any]) -> Dict[str, Any]:
+    stage = state.get("state")
+    if stage in (None, "idle"):
+        stage_value: Optional[str] = None
+    else:
+        stage_value = stage
+    return {
+        "stage": stage_value,
+        "total_records": state.get("total_records") or 0,
+        "processed_records": state.get("processed_records") or 0,
+        "batch_timestamp": state.get("batch_timestamp"),
     }
-    status_path = _get_sync_status_path()
-    try:
-        with open(status_path, "r", encoding="utf-8") as fh:
-            status = json.load(fh)
-            if isinstance(status, dict):
-                default_status.update({key: status.get(key) for key in default_status})
-    except FileNotFoundError:
-        pass
-
-    return default_status
 
 
-def _write_sync_status(**kwargs):
-    status = _read_sync_status()
-    status.update(kwargs)
-    status_path = _get_sync_status_path()
-    with open(status_path, "w", encoding="utf-8") as fh:
-        json.dump(status, fh, ensure_ascii=False, indent=2)
+def _last_imported_iso(state: Dict[str, Any], repo: HealthRepository) -> Optional[str]:
+    iso = state.get("last_completed_at")
+    if iso:
+        return iso
+    return repo.get_last_import_iso()
 
 
 def _get_repository() -> HealthRepository:
@@ -208,92 +175,103 @@ def rotate_api_key():
 
 @bp.get("/status")
 def get_status():
+    repo = _get_repository()
+    repo.auto_clear_if_stale()
+    state = repo.get_sync_state()
+    is_syncing = state["state"] in ("normalizing", "ingesting")
     base_status = {
-        "stages": {
-            "normalizing": "Payload validieren",
-            "ingesting": "Import läuft",
-            "done": "Import abgeschlossen",
-            "error": "Fehler beim Import",
-        },
+        "stages": SYNC_STAGES,
         "upload_hint": "Lade einen Health Auto Export als JSON hoch, um den Import manuell zu starten.",
     }
-
-    if _is_syncing():
-        return jsonify({"syncing": True, "sync_status": _read_sync_status(), **base_status})
-
-    repo = _get_repository()
-    return jsonify({"syncing": False, "last_imported_at": repo.get_last_import_iso(), **base_status})
+    payload: Dict[str, Any] = {
+        "syncing": is_syncing,
+        "sync_status": _sync_status_payload(state),
+        "last_imported_at": _last_imported_iso(state, repo),
+        "last_error": state.get("last_error"),
+        **base_status,
+    }
+    return jsonify(payload)
 
 
 @bp.get("/sync_status")
 def get_sync_status():
-    return jsonify(_read_sync_status())
+    repo = _get_repository()
+    repo.auto_clear_if_stale()
+    return jsonify(_sync_status_payload(repo.get_sync_state()))
 
 
-@bp.post("/ingest")
-def ingest():
-    if not _has_valid_ingest_key():
-        return jsonify({"ok": False, "error": "Unauthorized."}), 401
+@bp.get("/history")
+def get_history():
+    repo = _get_repository()
+    raw_limit = request.args.get("limit", "20")
+    try:
+        limit = int(raw_limit)
+    except ValueError:
+        limit = 20
+    return jsonify({"items": repo.get_sync_history(limit=limit)})
 
-    payload = request.get_json(silent=True) or {}
 
-    if _has_current_payload():
+@bp.post("/force_clear")
+def force_clear():
+    repo = _get_repository()
+    cleared = repo.force_clear_sync()
+    state = repo.get_sync_state()
+    return jsonify(
+        {
+            "ok": True,
+            "cleared": cleared,
+            "sync_status": _sync_status_payload(state),
+            "last_error": state.get("last_error"),
+        }
+    )
+
+
+def _run_ingest(payload: Any, client: str, force: bool = False):
+    """Shared ingest pipeline for iPhone Bearer and browser cookie callers."""
+
+    repo = _get_repository()
+    batch_ts = int(datetime.now(timezone.utc).timestamp())
+
+    try:
+        repo.acquire_sync_slot(client=client, batch_timestamp=batch_ts, force=force)
+    except SyncBusyError as exc:
         return (
             jsonify(
                 {
                     "ok": False,
-                    "error": "Es wird bereits ein Payload verarbeitet. Bitte später erneut versuchen.",
+                    "error": "Es wird bereits ein Sync verarbeitet. Bitte später erneut versuchen.",
+                    "sync_status": _sync_status_payload(exc.status),
                 }
             ),
             409,
         )
 
     current_payload_path = _persist_current_payload(payload)
-    normalized = list(_normalize_payload(payload))
-
-    _write_sync_status(
-        stage="normalizing",
-        total_records=len(normalized),
-        processed_records=0,
-        batch_timestamp=None,
-    )
+    try:
+        normalized = list(_normalize_payload(payload))
+    except Exception as exc:
+        repo.complete_sync_slot(final_state="error", last_error=f"normalize failed: {exc}")
+        _persist_failed_payload(payload)
+        _archive_payload(current_payload_path)
+        return jsonify({"ok": False, "error": "Payload konnte nicht normalisiert werden."}), 400
 
     if not normalized:
-        _write_sync_status(
-            stage="error",
-            total_records=0,
-            processed_records=0,
-            batch_timestamp=None,
+        repo.complete_sync_slot(
+            final_state="error",
+            last_error="no valid records in payload",
         )
         _persist_failed_payload(payload)
         _archive_payload(current_payload_path)
-        return jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}), 400
+        return (
+            jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}),
+            400,
+        )
 
-    batch_ts = int(datetime.now(timezone.utc).timestamp())
-    repo = _get_repository()
-    lock_path = _get_lock_path()
-    _set_sync_lock(lock_path)
-
-    processed_records = 0
-    _write_sync_status(
-        stage="ingesting",
-        total_records=len(normalized),
-        processed_records=processed_records,
-        batch_timestamp=batch_ts,
-    )
-
-    stage_status = "error"
+    repo.start_ingesting(total_records=len(normalized))
     replace_existing = request.args.get("replace_existing", "true").lower() != "false"
 
     def _progress_callback(processed_count: int):
-        nonlocal processed_records
-        processed_records = processed_count
-        _write_sync_status(
-            stage="ingesting",
-            total_records=len(normalized),
-            processed_records=processed_records,
-            batch_timestamp=batch_ts,
-        )
+        repo.update_sync_progress(processed_count)
 
     try:
         stats = repo.ingest_records(
@@ -303,16 +281,17 @@ def ingest():
             replace_existing=replace_existing,
         )
         repo.remove_duplicate_rows()
-        stage_status = "done"
-    finally:
-        _write_sync_status(
-            stage=stage_status,
-            total_records=len(normalized),
-            processed_records=processed_records,
-            batch_timestamp=batch_ts,
-        )
-        _clear_sync_lock(lock_path)
+    except Exception as exc:
+        repo.complete_sync_slot(final_state="error", last_error=str(exc))
         _archive_payload(current_payload_path)
+        raise
+
+    repo.complete_sync_slot(
+        final_state="done",
+        inserted=stats["inserted"],
+        skipped=stats["skipped"],
+    )
+    _archive_payload(current_payload_path)
 
     return (
         jsonify(
@@ -326,6 +305,24 @@ def ingest():
         ),
         201,
     )
+
+
+@bp.post("/ingest")
+def ingest():
+    if not _has_valid_ingest_key():
+        return jsonify({"ok": False, "error": "Unauthorized."}), 401
+
+    payload = request.get_json(silent=True) or {}
+    return _run_ingest(payload, client="iphone", force=False)
+
+
+@bp.post("/manual_ingest")
+def manual_ingest():
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({"ok": False, "error": "Erwarte JSON-Body."}), 400
+    force = request.args.get("force", "false").lower() == "true"
+    return _run_ingest(payload, client="browser", force=force)
 
 
 def _persist_failed_payload(payload: Any):
@@ -348,17 +345,6 @@ def _persist_failed_payload(payload: Any):
 
 def _get_current_payload_dir() -> str:
     return os.path.join(current_app.root_path, "data", "health", "current")
-
-
-def _has_current_payload() -> bool:
-    base_dir = _get_current_payload_dir()
-    try:
-        return any(
-            os.path.isfile(os.path.join(base_dir, entry))
-            for entry in os.listdir(base_dir)
-        )
-    except FileNotFoundError:
-        return False
 
 
 def _persist_current_payload(payload: Any) -> str:

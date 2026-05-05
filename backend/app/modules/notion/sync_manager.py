@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from flask import current_app
 
-from .sync import SyncResult, run_full_sync
+from .sync import SyncResult, run_delta_sync, run_full_sync
 
 
 class NotionSyncManager:
@@ -34,7 +34,7 @@ class NotionSyncManager:
                     "status": "running",
                     "processed": 0,
                     "total": 0,
-                    "mode": "full" if force_full else "refresh",
+                    "mode": "full" if force_full else "delta",
                     "error": None,
                     "started_at": datetime.utcnow().isoformat() + "Z",
                     "finished_at": None,
@@ -52,10 +52,14 @@ class NotionSyncManager:
                     self._state["processed"] = processed
                     self._state["total"] = total
 
-            result: SyncResult = run_full_sync(progress_callback=_report_progress)
+            if force_full:
+                result: SyncResult = run_full_sync(progress_callback=_report_progress)
+            else:
+                result = run_delta_sync(progress_callback=_report_progress)
 
             with self._lock:
                 self._state["result"] = result
+                self._state["mode"] = result.get("mode", self._state.get("mode"))
                 self._state["status"] = "completed" if result.get("ok") else "error"
                 self._state["error"] = None if result.get("ok") else (result.get("error") or "Sync failed")
                 self._state["finished_at"] = datetime.utcnow().isoformat() + "Z"

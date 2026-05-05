@@ -90,7 +90,7 @@ class HealthSettingsProvider(ModuleSettingsProvider):
 
     def get_manual_import_metadata(self):
         return {
-            "endpoint": "/api/health/ingest",
+            "endpoint": "/api/health/manual_ingest",
             "label": "Manueller Health Import",
             "help_text": "JSON-Export der Health Auto Export App hochladen. Startet direkt einen Sync.",
             "accept": ["application/json", ".json"],

@@ -49,7 +49,7 @@ def create_app():
             return None
         if request.path.startswith("/api/auth/"):
             return None
-        if request.path.startswith("/api/health/ingest"):
+        if request.path == "/api/health/ingest":
             return None
         if not session.get("user_id"):
             return jsonify({"ok": False, "error": "Unauthorized."}), 401

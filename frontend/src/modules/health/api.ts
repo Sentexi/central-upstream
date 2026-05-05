@@ -129,3 +129,38 @@ export async function fetchFitnessDashboard(range: RangeKey, group: GroupKey = "
   }
   return res.json();
 }
+
+export type SyncFinalState = "done" | "error" | "aborted";
+
+export interface SyncHistoryItem {
+  id: number;
+  batch_timestamp: number;
+  started_at: string;
+  finished_at: string;
+  duration_seconds: number | null;
+  final_state: SyncFinalState;
+  total_records: number;
+  processed_records: number;
+  inserted: number | null;
+  skipped: number | null;
+  last_error: string | null;
+  client: "iphone" | "browser" | null;
+}
+
+export async function fetchSyncHistory(limit = 20): Promise<SyncHistoryItem[]> {
+  const res = await fetch(`/api/health/history?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error("Konnte Sync Historie nicht laden");
+  }
+  const data = await res.json();
+  return Array.isArray(data?.items) ? (data.items as SyncHistoryItem[]) : [];
+}
+
+export async function forceClearSync(): Promise<boolean> {
+  const res = await fetch("/api/health/force_clear", { method: "POST" });
+  if (!res.ok) {
+    throw new Error("Force Clear fehlgeschlagen");
+  }
+  const data = await res.json();
+  return Boolean(data?.cleared);
+}

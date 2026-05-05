@@ -7,9 +7,19 @@ class HealthModule(BaseModule):
     version = "0.1.0"
 
     def init_app(self, app):
-        from .routes import bp
+        from .repository import HealthRepository
+        from .routes import _get_db_path, _load_table_schemas, bp
+        from .sync_manager import HealthSyncManager
 
         app.register_blueprint(bp, url_prefix="/api/health")
+
+        with app.app_context():
+            db_path = _get_db_path()
+            schemas = _load_table_schemas()
+            repo = HealthRepository(db_path, table_schemas=schemas)
+            manager = HealthSyncManager(repo=repo, app=app)
+            app.extensions["health_repo"] = repo
+            app.extensions["health_sync_manager"] = manager
 
     def get_manifest(self) -> dict:
         manifest = super().get_manifest()

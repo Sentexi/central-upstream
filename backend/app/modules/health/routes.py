@@ -11,7 +11,8 @@ from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, jsonify, request
 
-from .repository import HealthRepository, NormalizedRecord, SyncBusyError, _safe_divide
+from ...core.sync_manager import SyncBusyError
+from .repository import HealthRepository, NormalizedRecord, _safe_divide
 
 bp = Blueprint("health", __name__)
 
@@ -63,6 +64,18 @@ def _get_repository() -> HealthRepository:
     repo = HealthRepository(db_path, table_schemas=table_schemas)
     current_app.extensions["health_repo"] = repo
     return repo
+
+
+def _get_sync_manager():
+    manager = current_app.extensions.get("health_sync_manager")  # type: ignore[attr-defined]
+    if manager is None:
+        # Fallback for codepaths that bypass init_app (e.g. tests). Lazy
+        # creation mirrors the eager path in module.init_app.
+        from .sync_manager import HealthSyncManager
+
+        manager = HealthSyncManager(repo=_get_repository(), app=current_app._get_current_object())
+        current_app.extensions["health_sync_manager"] = manager
+    return manager
 
 
 def _extract_api_key(header_name: str) -> str:
@@ -175,47 +188,44 @@ def rotate_api_key():
 
 @bp.get("/status")
 def get_status():
-    repo = _get_repository()
-    repo.auto_clear_if_stale()
-    state = repo.get_sync_state()
+    manager = _get_sync_manager()
+    manager.auto_clear_if_stale()
+    state = manager.get_state()
     is_syncing = state["state"] in ("normalizing", "ingesting")
-    base_status = {
-        "stages": SYNC_STAGES,
-        "upload_hint": "Lade einen Health Auto Export als JSON hoch, um den Import manuell zu starten.",
-    }
     payload: Dict[str, Any] = {
         "syncing": is_syncing,
         "sync_status": _sync_status_payload(state),
-        "last_imported_at": _last_imported_iso(state, repo),
+        "last_imported_at": _last_imported_iso(state, _get_repository()),
         "last_error": state.get("last_error"),
-        **base_status,
+        "stages": SYNC_STAGES,
+        "upload_hint": "Lade einen Health Auto Export als JSON hoch, um den Import manuell zu starten.",
     }
     return jsonify(payload)
 
 
 @bp.get("/sync_status")
 def get_sync_status():
-    repo = _get_repository()
-    repo.auto_clear_if_stale()
-    return jsonify(_sync_status_payload(repo.get_sync_state()))
+    manager = _get_sync_manager()
+    manager.auto_clear_if_stale()
+    return jsonify(_sync_status_payload(manager.get_state()))
 
 
 @bp.get("/history")
 def get_history():
-    repo = _get_repository()
+    manager = _get_sync_manager()
     raw_limit = request.args.get("limit", "20")
     try:
         limit = int(raw_limit)
     except ValueError:
         limit = 20
-    return jsonify({"items": repo.get_sync_history(limit=limit)})
+    return jsonify({"items": manager.get_history(limit=limit)})
 
 
 @bp.post("/force_clear")
 def force_clear():
-    repo = _get_repository()
-    cleared = repo.force_clear_sync()
-    state = repo.get_sync_state()
+    manager = _get_sync_manager()
+    cleared = manager.force_clear_sync()
+    state = manager.get_state()
     return jsonify(
         {
             "ok": True,
@@ -227,13 +237,18 @@ def force_clear():
 
 
 def _run_ingest(payload: Any, client: str, force: bool = False):
-    """Shared ingest pipeline for iPhone Bearer and browser cookie callers."""
+    """Hand the payload to the sync manager and return 202 on accept."""
 
-    repo = _get_repository()
-    batch_ts = int(datetime.now(timezone.utc).timestamp())
+    manager = _get_sync_manager()
+    replace_existing = request.args.get("replace_existing", "true").lower() != "false"
 
     try:
-        repo.acquire_sync_slot(client=client, batch_timestamp=batch_ts, force=force)
+        state = manager.start_ingest(
+            payload=payload,
+            client=client,
+            replace_existing=replace_existing,
+            force=force,
+        )
     except SyncBusyError as exc:
         return (
             jsonify(
@@ -246,64 +261,16 @@ def _run_ingest(payload: Any, client: str, force: bool = False):
             409,
         )
 
-    current_payload_path = _persist_current_payload(payload)
-    try:
-        normalized = list(_normalize_payload(payload))
-    except Exception as exc:
-        repo.complete_sync_slot(final_state="error", last_error=f"normalize failed: {exc}")
-        _persist_failed_payload(payload)
-        _archive_payload(current_payload_path)
-        return jsonify({"ok": False, "error": "Payload konnte nicht normalisiert werden."}), 400
-
-    if not normalized:
-        repo.complete_sync_slot(
-            final_state="error",
-            last_error="no valid records in payload",
-        )
-        _persist_failed_payload(payload)
-        _archive_payload(current_payload_path)
-        return (
-            jsonify({"ok": False, "error": "Keine gültigen Health-Datensätze im Payload gefunden."}),
-            400,
-        )
-
-    repo.start_ingesting(total_records=len(normalized))
-    replace_existing = request.args.get("replace_existing", "true").lower() != "false"
-
-    def _progress_callback(processed_count: int):
-        repo.update_sync_progress(processed_count)
-
-    try:
-        stats = repo.ingest_records(
-            normalized,
-            batch_ts,
-            _progress_callback,
-            replace_existing=replace_existing,
-        )
-        repo.remove_duplicate_rows()
-    except Exception as exc:
-        repo.complete_sync_slot(final_state="error", last_error=str(exc))
-        _archive_payload(current_payload_path)
-        raise
-
-    repo.complete_sync_slot(
-        final_state="done",
-        inserted=stats["inserted"],
-        skipped=stats["skipped"],
-    )
-    _archive_payload(current_payload_path)
-
     return (
         jsonify(
             {
                 "ok": True,
-                "inserted": stats["inserted"],
-                "skipped": stats["skipped"],
-                "by_type": stats["by_type"],
-                "batch_timestamp": datetime.fromtimestamp(batch_ts, tz=timezone.utc).isoformat(),
+                "syncing": True,
+                "sync_status": _sync_status_payload(state),
+                "stages": SYNC_STAGES,
             }
         ),
-        201,
+        202,
     )
 
 

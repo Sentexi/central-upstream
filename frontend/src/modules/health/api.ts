@@ -164,3 +164,32 @@ export async function forceClearSync(): Promise<boolean> {
   const data = await res.json();
   return Boolean(data?.cleared);
 }
+
+export interface ApiKeyReveal {
+  auth_header: string;
+  auth_key: string;
+  ingest_url: string;
+  curl_example: string;
+}
+
+async function postApiKeyAction(path: string): Promise<ApiKeyReveal> {
+  const res = await fetch(path, { method: "POST" });
+  if (!res.ok) {
+    throw new Error("API Key Aktion fehlgeschlagen");
+  }
+  const data = await res.json();
+  return {
+    auth_header: String(data?.auth_header ?? ""),
+    auth_key: String(data?.auth_key ?? ""),
+    ingest_url: String(data?.ingest_url ?? ""),
+    curl_example: String(data?.curl_example ?? ""),
+  };
+}
+
+export function revealApiKey() {
+  return postApiKeyAction("/api/health/settings/api-key/reveal");
+}
+
+export function rotateApiKey() {
+  return postApiKeyAction("/api/health/settings/api-key/rotate");
+}

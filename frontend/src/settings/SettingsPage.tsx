@@ -5,6 +5,7 @@ import type {
   SettingsModuleSchema,
   SettingsValueMap,
 } from "../core/types";
+import { HealthApiKeyActions } from "../modules/health/HealthApiKeyActions";
 import { HealthForceClearButton } from "../modules/health/HealthForceClearButton";
 import { HealthSyncHistory } from "../modules/health/HealthSyncHistory";
 
@@ -629,6 +630,8 @@ export function SettingsPage() {
                 {module.module_id === "health" && (
                   <HealthSyncHistory refreshKey={status.state} />
                 )}
+
+                {module.module_id === "health" && <HealthApiKeyActions />}
               </div>
 
               {status.state === "error" && status.message && (

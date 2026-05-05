@@ -608,6 +608,56 @@ body {
   word-break: break-word;
 }
 
+.health-api-key {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 10px;
+}
+
+.health-api-key__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.health-api-key__buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.health-api-key__panel {
+  display: grid;
+  gap: 10px;
+}
+
+.health-api-key__field {
+  display: grid;
+  gap: 4px;
+}
+
+.health-api-key__row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.health-api-key__row .input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.health-api-key__row textarea.input {
+  resize: vertical;
+}
+
 .status-syncing {
   border-color: rgba(59, 130, 246, 0.5);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);

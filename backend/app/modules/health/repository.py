@@ -910,11 +910,19 @@ class HealthRepository:
                     skip_overlap_check=replace_existing,
                 )
                 processed += 1
-                if progress_callback and (
+
+                # Commit at chunk boundaries so the ingest connection
+                # releases its write lock before the progress callback (or
+                # any concurrent status read) opens a separate connection.
+                # Without this every progress flush self deadlocks against
+                # the still open ingest transaction.
+                if (
                     processed % PROGRESS_FLUSH_INTERVAL == 0
                     or processed == total_records
                 ):
-                    progress_callback(processed)
+                    conn.commit()
+                    if progress_callback:
+                        progress_callback(processed)
 
                 bucket = stats.setdefault(record.data_type, {"inserted": 0, "skipped": 0})
                 if was_inserted:

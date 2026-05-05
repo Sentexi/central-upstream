@@ -28,6 +28,31 @@ class SyncResult(Dict):
 DEFAULT_NOTION_VERSION = "2025-09-03"
 
 
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[str]:
+    """Validiere einen gespeicherten ISO-8601 Timestamp.
+
+    Gibt den Originalstring zurueck wenn parsbar, sonst None. Akzeptiert
+    sowohl Suffix ``Z`` als auch ``+00:00``. Wird benutzt um die Gueltigkeit
+    von ``last_incremental_sync`` zu pruefen, bevor der Wert als Filter an
+    die Notion API durchgereicht wird.
+    """
+
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate_for_parse = candidate[:-1] + "+00:00"
+    else:
+        candidate_for_parse = candidate
+    try:
+        datetime.fromisoformat(candidate_for_parse)
+    except ValueError:
+        return None
+    return value
+
+
 def _load_settings() -> dict:
     return settings_storage.get_settings_for_module("notion")
 

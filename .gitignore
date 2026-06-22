@@ -35,3 +35,10 @@ backend/static/
 
 # Sonstiges
 .DS_Store
+
+# design-sync (claude.ai/design sync tooling — staged scripts + build output, not committed)
+frontend/.ds-sync/
+frontend/ds-bundle/
+frontend/.design-sync/.cache/
+frontend/.design-sync/learnings/
+frontend/.design-sync/node_modules

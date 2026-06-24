@@ -1,17 +1,18 @@
 import type { ReactNode } from 'react';
 import { GlassCard } from 'central-upstream-frontend';
 
-// The design system is dark-themed: GlassCard assumes the app's dark `--bg`
-// page background, set on `body` by the global stylesheet. The preview harness
-// renders on a white body, so each story restores that themed backdrop with a
-// <Frame> wrapper. This is the exact context GlassCard sits in inside the app
-// (it is always placed on the dark page background), not extra styling.
+// The design system is dark-themed (Aqua Operator): GlassCard assumes the app's
+// dark `--bg` page background and radial glow, set on `body` by the global
+// stylesheet. The preview harness renders on a white body, so each story restores
+// that themed backdrop with a <Frame> wrapper. This is the exact context
+// GlassCard sits in inside the app (always on the dark page background), not
+// extra styling.
 function Frame({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
         background:
-          'radial-gradient(circle at 15% 30%, rgba(59,130,246,0.10), transparent 30%), #020617',
+          'radial-gradient(120% 70% at 84% -8%, #101638 0%, #0a0c18 50%)',
         padding: 28,
         borderRadius: 16,
       }}
@@ -44,7 +45,7 @@ export function Default() {
   );
 }
 
-/** glow (low intensity, blue accent). For an active or live surface. */
+/** glow (low intensity, teal ring). For an active or live surface. */
 export function GlowLow() {
   return (
     <Frame>
@@ -60,7 +61,7 @@ export function GlowLow() {
   );
 }
 
-/** glow with stressLevel="high" (danger, red accent). For alerts and warnings. */
+/** glow with stressLevel="high" (danger, coral ring). For alerts and warnings. */
 export function GlowHigh() {
   return (
     <Frame>

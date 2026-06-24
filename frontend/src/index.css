@@ -145,7 +145,7 @@ pre {
 }
 
 /* ============================================================
- * App-Shell / Sidebar (bestehend, bleibt bis Task 2 funktionsfaehig)
+ * App-Shell / Sidebar (Aqua Operator, Flex-Layout)
  * ============================================================ */
 .app-shell {
   position: relative;
@@ -157,37 +157,55 @@ pre {
 }
 
 .layout-grid {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 0;
-  align-items: start;
+  display: flex;
+  min-height: 100vh;
   width: 100%;
-  transition: grid-template-columns 200ms ease;
-}
-
-.layout-grid.sidebar-collapsed {
-  grid-template-columns: 80px 1fr;
 }
 
 .sidebar {
+  width: 240px;
+  flex: none;
   background: var(--sidebar-bg);
   border: none;
   border-right: 1px solid var(--border);
   border-radius: 0;
   padding: 24px 16px;
-  display: grid;
-  gap: 18px;
-  align-content: start;
-  position: relative;
-  transition: padding 200ms ease, width 200ms ease, transform 200ms ease;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width 200ms ease, padding 200ms ease;
 }
 
 .sidebar.is-collapsed {
-  padding: 16px 12px;
+  width: 72px;
+  padding: 24px 12px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar.is-collapsed .sidebar-header {
+  justify-content: center;
+}
+
+.sidebar-brand {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sidebar.is-collapsed .sidebar-brand {
+  display: none;
 }
 
 .sidebar-header .sidebar-title {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 20px;
   font-weight: 700;
   color: var(--text-high);
@@ -197,10 +215,11 @@ pre {
 .sidebar-nav {
   display: grid;
   gap: 3px;
+  margin-top: 24px;
 }
 
 .sidebar.is-collapsed .sidebar-nav {
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav-item {
@@ -211,6 +230,7 @@ pre {
   padding: 10px 12px;
   background: transparent;
   border: none;
+  border-left: 2px solid transparent;
   color: var(--text-mid);
   border-radius: var(--radius-control);
   cursor: pointer;
@@ -243,9 +263,10 @@ pre {
 }
 
 .nav-item .nav-icon {
-  font-size: 14px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex: none;
 }
 
 .nav-item .nav-label {
@@ -258,8 +279,7 @@ pre {
 }
 
 .sidebar.is-collapsed .nav-label,
-.sidebar.is-collapsed .sidebar-status-text,
-.sidebar.is-collapsed .sidebar-header {
+.sidebar.is-collapsed .sidebar-status-text {
   display: none;
 }
 
@@ -271,8 +291,15 @@ pre {
   box-shadow: inset 0 0 0 1px #20284A;
 }
 
+.nav-item.active .nav-icon {
+  color: var(--teal);
+}
+
 .sidebar-footer {
-  display: inline-flex;
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
   align-items: center;
   gap: 8px;
   color: var(--text-low);
@@ -280,12 +307,23 @@ pre {
   font-family: 'IBM Plex Mono', monospace;
 }
 
+.sidebar.is-collapsed .sidebar-footer {
+  justify-content: center;
+}
+
+.sidebar-footer .signal {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 7px var(--green);
+}
+
 .sidebar-toggle {
-  position: absolute;
-  top: 24px;
-  right: 16px;
   width: 26px;
   height: 26px;
+  flex: none;
   border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: transparent;
@@ -294,22 +332,42 @@ pre {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 12px;
-  transition: background 150ms ease, border-color 150ms ease;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .sidebar-toggle:hover {
   background: var(--nav-hover);
   border-color: var(--border-strong);
+  color: var(--soft);
 }
 
 .content-area {
-  display: block;
+  flex: 1;
   min-width: 0;
+  padding: 30px 36px 48px;
 }
 
-.noise-overlay {
-  display: none;
+/* Vertikaler Stapel fuer Modul-Slots und den Today-Platzhalter. */
+.slot-stack {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+/* Aqua-Operator-Panel fuer Loading-/Empty-/Hinweis-Bloecke. */
+.panel {
+  padding: 18px;
+  border-radius: var(--radius-card);
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.panel--muted {
+  opacity: 0.85;
+}
+
+.panel .card-description:last-child {
+  margin-bottom: 0;
 }
 
 .app-grid {
@@ -317,7 +375,8 @@ pre {
   z-index: 1;
   display: grid;
   gap: 24px;
-  padding: 30px 36px 48px;
+  /* Aeusseres Padding kommt jetzt von .content-area (Aqua-Operator-Shell). */
+  padding: 0;
 }
 
 .app-header {
@@ -495,6 +554,10 @@ input[type="text"]:focus {
 
 .button,
 button[type="submit"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 1px solid var(--teal);
   border-radius: var(--radius-control);
   padding: 10px 16px;

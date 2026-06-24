@@ -84,7 +84,13 @@ export function ComboChart({
         ) : null}
         <Tooltip
           cursor={{ fill: "rgba(31,195,214,0.06)" }}
-          content={<ChartTooltip valueFormatter={leftFormatter} />}
+          content={
+            <ChartTooltip
+              valueFormatter={leftFormatter}
+              rightFormatter={dualAxis ? rightFormatter : undefined}
+              rightKeys={dualAxis ? [line.dataKey] : undefined}
+            />
+          }
         />
         {bars.map((bar, index) => (
           <Bar

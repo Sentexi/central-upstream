@@ -31,6 +31,10 @@ export interface ChartTooltipProps extends TooltipProps<ValueType, NameType> {
   valueFormatter?: (value: number) => string;
   /** Optionale Einheit hinter dem Wert. */
   unit?: string;
+  /** Formatter fuer Serien auf der rechten (Dual-Axis-)Achse. */
+  rightFormatter?: (value: number) => string;
+  /** dataKeys, die auf der rechten Achse liegen und rightFormatter nutzen. */
+  rightKeys?: string[];
 }
 
 /**
@@ -43,6 +47,8 @@ export function ChartTooltip({
   label,
   valueFormatter,
   unit,
+  rightFormatter,
+  rightKeys,
 }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -54,10 +60,13 @@ export function ChartTooltip({
       {payload.map((entry, index) => {
         const raw = entry.value;
         const numeric = typeof raw === "number" ? raw : Number(raw);
+        const onRight =
+          rightKeys != null &&
+          entry.dataKey != null &&
+          rightKeys.includes(String(entry.dataKey));
+        const fmt = onRight ? rightFormatter ?? valueFormatter : valueFormatter;
         const display =
-          valueFormatter && !Number.isNaN(numeric)
-            ? valueFormatter(numeric)
-            : String(raw ?? "");
+          fmt && !Number.isNaN(numeric) ? fmt(numeric) : String(raw ?? "");
         return (
           <div
             key={`${entry.dataKey ?? entry.name ?? index}`}

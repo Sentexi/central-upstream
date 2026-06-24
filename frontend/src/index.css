@@ -354,6 +354,11 @@ pre {
   align-content: start;
 }
 
+/* Work-Tabelle: Zeilen-Hover (Aqua Operator). */
+.notion-work-row:hover {
+  background: var(--nav-hover);
+}
+
 /* Aqua-Operator-Panel fuer Loading-/Empty-/Hinweis-Bloecke. */
 .panel {
   padding: 18px;

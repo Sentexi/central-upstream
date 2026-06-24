@@ -742,7 +742,7 @@ export function NotionTodosView() {
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 12,
                       whiteSpace: "nowrap",
-                      color: due.overdue ? "#FF9A91" : "var(--soft)",
+                      color: due.overdue ? "var(--error-text)" : "var(--soft)",
                     }}
                   >
                     {due.text}

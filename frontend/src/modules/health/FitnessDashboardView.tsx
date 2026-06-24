@@ -22,17 +22,15 @@ import {
   BarChart,
   ComboChart,
   DualLineChart,
+  StackedBarLineChart,
   CHART_COLORS,
 } from "../../core/charts";
 
 // ── Akzentfarben (Tokens) ─────────────────────────────────────────────────────
+// Nur teal wird im Layout direkt referenziert (ProgressBar). Die uebrigen Akzente
+// kommen ueber CHART_COLORS in die Charts, deshalb haelt ACCENT bewusst nur teal.
 const ACCENT = {
   teal: "var(--teal)",
-  indigo: "var(--indigo)",
-  amber: "var(--amber)",
-  coral: "var(--coral)",
-  violet: "var(--violet)",
-  green: "var(--green)",
 } as const;
 
 // ── VO2-Zonengrenzen (aus Fitness-Mockup-Script: zoneLine(vo2, 24, 64, …)) ─────
@@ -335,6 +333,66 @@ export function FitnessDashboardView() {
     }));
   }, [weightSeries, weekly]);
 
+  // ── Sekundaere Sektion: Bestandsdaten (Mobility, Floors, Efficiency) ──────────
+
+  // Mobility-Kennzahl (Walking-Speed) aus tiles.mobility.
+  const mobilityTile = data?.tiles.mobility;
+
+  // Aktivitaet & Floors: resting/active kcal (gestapelt) + floors als Linie.
+  // Granularitaet respektieren (daily vs. weekly), wie bei den uebrigen Charts.
+  const activeKcalSeries = weekly
+    ? data?.charts.active_floors.active_kcal_weekly ?? []
+    : data?.charts.active_floors.active_kcal ?? [];
+  const restingKcalSeries = weekly
+    ? data?.charts.active_floors.resting_kcal_weekly ?? []
+    : data?.charts.active_floors.resting_kcal ?? [];
+  const floorsSeries = weekly
+    ? data?.charts.active_floors.floors_weekly ?? []
+    : data?.charts.active_floors.floors ?? [];
+
+  const activeFloorsData = useMemo(() => {
+    const length = Math.max(restingKcalSeries.length, activeKcalSeries.length, floorsSeries.length);
+    return Array.from({ length }, (_, idx) => {
+      const resting = restingKcalSeries[idx];
+      const active = activeKcalSeries[idx];
+      const floors = floorsSeries[idx];
+      const src = resting ?? active ?? floors ?? {};
+      return {
+        x: xLabel(src, idx, weekly),
+        resting_kcal: resting?.value ?? null,
+        active_kcal: active?.value ?? null,
+        floors: floors?.value ?? null,
+      };
+    });
+  }, [restingKcalSeries, activeKcalSeries, floorsSeries, weekly]);
+
+  // Efficiency-Trend: efficiency_index (Linie, rechte Achse) + stair_up/stair_down
+  // (gruppierte Balken). Diese Serien haben kein weekly-Pendant, daher daily.
+  const efficiencyIndexSeries = data?.charts.efficiency.efficiency_index ?? [];
+  const stairUpSeries = data?.charts.efficiency.stair_up ?? [];
+  const stairDownSeries = data?.charts.efficiency.stair_down ?? [];
+
+  const efficiencyData = useMemo(() => {
+    const length = Math.max(
+      efficiencyIndexSeries.length,
+      stairUpSeries.length,
+      stairDownSeries.length,
+    );
+    return Array.from({ length }, (_, idx) => {
+      const eff = efficiencyIndexSeries[idx];
+      const up = stairUpSeries[idx];
+      const down = stairDownSeries[idx];
+      const src = eff ?? up ?? down ?? {};
+      return {
+        // efficiency_index/stairs sind immer daily (kein weekly-Pendant in der API).
+        x: xLabel(src, idx, false),
+        efficiency_index: eff?.value ?? null,
+        stair_up: up?.value ?? null,
+        stair_down: down?.value ?? null,
+      };
+    });
+  }, [efficiencyIndexSeries, stairUpSeries, stairDownSeries]);
+
   return (
     <div className="app-grid">
       {/* ── PageHeader ──────────────────────────────────────────────────────── */}
@@ -408,6 +466,8 @@ export function FitnessDashboardView() {
             {/* Consistency */}
             {(() => {
               const tile = data.tiles.consistency;
+              // Annahme: die Einheit kodiert das Wochen-Soll als "/7" (aktive Tage von 7).
+              // Ziffern aus der Unit ziehen ("/7" -> 7), Fallback 7 falls kein Wert da ist.
               const total = Number((tile.unit ?? "/7").replace(/[^\d]/g, "")) || 7;
               const active = tile.value ?? 0;
               const pct = total > 0 ? (active / total) * 100 : 0;
@@ -557,6 +617,96 @@ export function FitnessDashboardView() {
                   height={210}
                   unit="kg"
                   valueFormatter={(v) => v.toFixed(1)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+          </div>
+
+          {/* ── Weitere Metriken (Bestandsdaten im Aqua-Operator-Look) ──────── */}
+          <SectionHeader label="Weitere Metriken" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {/* Mobility (Walking-Speed) ── StatCard mit Delta */}
+            <StatCard
+              eyebrow={mobilityTile?.label ?? "Mobility"}
+              value={formatValue(mobilityTile?.value, 1)}
+              unit={mobilityTile?.unit ?? "km/h"}
+              delta={mobilityTile ? makeDelta(mobilityTile) : undefined}
+            >
+              {mobilityTile?.detail ? (
+                <Caption>{mobilityTile.detail}</Caption>
+              ) : (
+                <Caption>Walking-Speed im Zeitraum</Caption>
+              )}
+            </StatCard>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {/* Aktivitaet & Floors ── gestapelte kcal-Balken + Floors-Linie */}
+            <ChartPanel
+              title="Aktivität & Floors"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.indigo} label="Ruhe kcal" />
+                  <LegendItem color={CHART_COLORS.amber} label="Aktiv kcal" />
+                  <LegendItem color={CHART_COLORS.teal} label="Floors" line />
+                </>
+              }
+            >
+              {activeFloorsData.length ? (
+                <StackedBarLineChart
+                  data={activeFloorsData}
+                  xKey="x"
+                  bars={[
+                    { dataKey: "resting_kcal", name: "Ruhe kcal", color: CHART_COLORS.indigo },
+                    { dataKey: "active_kcal", name: "Aktiv kcal", color: CHART_COLORS.amber },
+                  ]}
+                  line={{ dataKey: "floors", name: "Floors", color: CHART_COLORS.teal }}
+                  height={210}
+                  valueFormatter={(v) => v.toFixed(0)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+
+            {/* Efficiency-Trend ── Index (rechte Achse) + Stairs (Balken) */}
+            <ChartPanel
+              title="Efficiency-Trend"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.violet} label="Stairs ▲" />
+                  <LegendItem color={CHART_COLORS.coral} label="Stairs ▼" />
+                  <LegendItem color={CHART_COLORS.teal} label="Index" line />
+                </>
+              }
+            >
+              {efficiencyData.length ? (
+                <ComboChart
+                  data={efficiencyData}
+                  xKey="x"
+                  dualAxis
+                  bars={[
+                    { dataKey: "stair_up", name: "Stairs ▲", color: CHART_COLORS.violet },
+                    { dataKey: "stair_down", name: "Stairs ▼", color: CHART_COLORS.coral },
+                  ]}
+                  line={{ dataKey: "efficiency_index", name: "Index", color: CHART_COLORS.teal }}
+                  height={210}
+                  leftFormatter={(v) => v.toFixed(0)}
+                  rightFormatter={(v) => v.toFixed(1)}
                 />
               ) : (
                 <EmptyChart />

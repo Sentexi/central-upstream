@@ -660,31 +660,293 @@ button[type="submit"]:disabled {
 .loader { opacity: 0.8; }
 
 /* ============================================================
- * Settings
+ * Settings (Aqua Operator: Modul-Karten dreiteilig)
  * ============================================================ */
 .settings-stack {
   display: grid;
-  gap: 16px;
+  gap: 0;
+}
+
+.settings-alert {
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--error-border);
+  background: var(--error-fill);
+}
+
+.settings-alert__badge {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 93, 82, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--error-text);
+  font-weight: 700;
+}
+
+.settings-alert__text {
+  flex: 1;
+  font-size: 13.5px;
+  color: var(--text-mid);
+}
+
+.settings-alert__module {
+  color: var(--text-high);
+  font-weight: 600;
+}
+
+.settings-alert__action {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--error-text);
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 93, 82, 0.35);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: 'Space Grotesk', sans-serif;
+  transition: background 120ms ease;
+}
+
+.settings-alert__action:hover {
+  background: rgba(255, 93, 82, 0.1);
 }
 
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
   gap: 16px;
+  margin-top: 18px;
+}
+
+/* Modul-Karte: Header / Body / Footer */
+.settings-card {
+  border-radius: var(--radius-module);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  scroll-margin-top: 24px;
+}
+
+.settings-card.is-flagged {
+  border-color: var(--error-border);
 }
 
 .settings-card__header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-card__eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-low);
+  text-transform: uppercase;
+}
+
+.settings-card__title {
+  margin: 3px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-high);
+}
+
+.settings-card__body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.settings-card__footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Statuspille im Modul-Header */
+.settings-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.settings-status__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.settings-status--success {
+  color: var(--success-text);
+  background: rgba(70, 207, 146, 0.12);
+  border-color: rgba(70, 207, 146, 0.3);
+}
+
+.settings-status--success .settings-status__dot {
+  background: var(--green);
+}
+
+.settings-status--error {
+  color: var(--error-text);
+  background: rgba(255, 93, 82, 0.12);
+  border-color: rgba(255, 93, 82, 0.3);
+}
+
+.settings-status--error .settings-status__dot {
+  background: var(--error);
+}
+
+.settings-status--teal {
+  color: var(--teal);
+  background: rgba(31, 195, 214, 0.12);
+  border-color: rgba(31, 195, 214, 0.3);
+}
+
+.settings-status--teal .settings-status__dot {
+  background: var(--teal);
+}
+
+.settings-status--neutral {
+  color: var(--text-mid);
+  background: rgba(148, 153, 182, 0.12);
+  border-color: rgba(148, 153, 182, 0.18);
+}
+
+.settings-status--neutral .settings-status__dot {
+  background: var(--text-low);
+}
+
+.settings-status--syncing .settings-status__dot,
+.settings-status--teal.is-spinning .settings-status__dot {
+  box-shadow: 0 0 7px var(--teal);
+}
+
+/* Schema-Feld im neuen Look */
+.settings-field {
+  display: grid;
+  gap: 0;
+}
+
+.settings-field__meta {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 9px;
+}
+
+.settings-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--soft);
+}
+
+.required {
+  color: var(--coral);
+  margin-left: 4px;
+}
+
+.settings-field__help {
+  font-size: 11.5px;
+  color: var(--text-low);
+}
+
+/* Eingabe im Modul-Look: dunkel, Mono, Hover-Border */
+.settings-input {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: var(--radius-input);
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border-strong);
+  color: var(--soft);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12.5px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.settings-input::placeholder {
+  color: var(--text-faint);
+}
+
+.settings-input:hover {
+  border-color: #313760;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(31, 195, 214, 0.18);
+}
+
+select.settings-input {
+  cursor: pointer;
+}
+
+input[type="file"].settings-input {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Boolean-Feld als Zeile */
+.settings-field-boolean {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--soft);
+  cursor: pointer;
 }
 
-.settings-fields {
-  margin-top: 8px;
+.settings-field-boolean input {
+  accent-color: var(--teal);
+  width: 16px;
+  height: 16px;
 }
 
+.settings-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--error-border);
+  background: var(--error-fill);
+  color: var(--error-text);
+  font-size: 13px;
+}
+
+.settings-success {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--success-border);
+  background: var(--success-fill);
+  color: var(--success-text);
+  font-size: 13px;
+}
+
+/* Manueller Import (Health) im Modul-Look */
 .manual-import {
-  padding: 12px;
+  padding: 14px;
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
   background: var(--sidebar-bg);
@@ -698,95 +960,47 @@ button[type="submit"]:disabled {
   gap: 8px;
 }
 
-.settings-field {
+/* Sync-Fortschritt im Modul-Look */
+.sync-progress {
   display: grid;
   gap: 6px;
 }
 
-.settings-field__meta {
-  display: grid;
-  gap: 4px;
-}
-
-.settings-label {
-  font-weight: 600;
-  color: var(--text-high);
-}
-
-.required {
-  color: var(--coral);
-  margin-left: 6px;
-}
-
-.settings-error {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--error-border);
-  background: var(--error-fill);
-  color: var(--error-text);
-}
-
-.settings-success {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--success-border);
-  background: var(--success-fill);
-  color: var(--success-text);
-}
-
-.settings-actions {
+.sync-progress__labels {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
 }
 
+/* Statuspillen (Sync-Historie) behalten ihr Vokabular bei */
 .status-pill {
-  padding: 6px 11px;
+  padding: 5px 11px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
   color: var(--text-mid);
-  font-size: 13px;
+  font-size: 11.5px;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .status-success {
-  border-color: var(--success-border);
-  background: var(--success-fill);
+  border-color: rgba(70, 207, 146, 0.3);
+  background: rgba(70, 207, 146, 0.12);
   color: var(--success-text);
 }
 
 .status-error {
-  border-color: var(--error-border);
-  background: var(--error-fill);
+  border-color: rgba(255, 93, 82, 0.3);
+  background: rgba(255, 93, 82, 0.12);
   color: var(--error-text);
-}
-
-.status-saving {
-  border-color: rgba(31, 195, 214, 0.4);
-  color: var(--teal);
 }
 
 .status-idle {
   border-color: var(--border-strong);
   color: var(--text-mid);
-}
-
-.status-syncing {
-  border-color: rgba(31, 195, 214, 0.5);
-  color: var(--teal);
-}
-
-.status-saving::before,
-.status-syncing::before {
-  content: "";
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(31, 195, 214, 0.35);
-  border-top-color: var(--teal);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -796,19 +1010,80 @@ button[type="submit"]:disabled {
 }
 
 /* ============================================================
- * Health (API-Key, History, Force-Clear)
+ * Health (API-Key, History, Force-Clear) im Aqua-Operator-Look
  * ============================================================ */
+.settings-subsection {
+  display: grid;
+  gap: 9px;
+  padding-top: 4px;
+  border-top: 1px solid var(--row-divider);
+}
+
+.settings-subsection__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-subsection__label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-low);
+}
+
+/* Chips: kleine, sekundaere Aktionen (Anzeigen/Rotieren/Neu laden) */
+.settings-chip {
+  font-size: 11.5px;
+  color: var(--soft);
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.settings-chip:hover:not(:disabled) {
+  background: var(--track);
+  color: var(--soft);
+}
+
+.settings-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-chip--danger {
+  color: var(--error-text);
+  border-color: rgba(255, 93, 82, 0.35);
+}
+
+.settings-chip--danger:hover:not(:disabled) {
+  background: rgba(255, 93, 82, 0.1);
+}
+
+.settings-chip-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .health-force-clear {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 8px;
 }
 
 .health-history {
-  margin-top: 16px;
   display: grid;
-  gap: 8px;
+  gap: 9px;
 }
 
 .health-history__header {
@@ -821,19 +1096,28 @@ button[type="submit"]:disabled {
 .health-history__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .health-history__table th,
 .health-history__table td {
-  padding: 6px 8px;
+  padding: 7px 8px;
   text-align: left;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--row-divider);
 }
 
 .health-history__table th {
-  color: var(--text-mid);
+  color: var(--text-low);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   font-weight: 600;
+}
+
+.health-history__table td {
+  color: var(--text-mid);
+  font-family: 'IBM Plex Mono', monospace;
 }
 
 .health-history__row.clickable {
@@ -850,14 +1134,10 @@ button[type="submit"]:disabled {
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--error-text);
 }
 
 .health-api-key {
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 12px;
-  background: var(--sidebar-bg);
   display: grid;
   gap: 10px;
 }
@@ -872,7 +1152,7 @@ button[type="submit"]:disabled {
 
 .health-api-key__buttons {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -883,23 +1163,30 @@ button[type="submit"]:disabled {
 
 .health-api-key__field {
   display: grid;
-  gap: 4px;
+  gap: 5px;
+}
+
+.health-api-key__caption {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--text-low);
 }
 
 .health-api-key__row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: stretch;
 }
 
-.health-api-key__row .input {
+.health-api-key__row .settings-input {
   flex: 1;
-  font-family: 'IBM Plex Mono', monospace;
   font-size: 12px;
+  color: var(--soft);
 }
 
-.health-api-key__row textarea.input {
+.health-api-key__row textarea.settings-input {
   resize: vertical;
+  line-height: 1.5;
 }
 
 /* ============================================================

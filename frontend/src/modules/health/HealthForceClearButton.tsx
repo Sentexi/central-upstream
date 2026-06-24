@@ -34,7 +34,7 @@ export function HealthForceClearButton({ visible, onCleared }: HealthForceClearB
     <div className="health-force-clear">
       <button
         type="button"
-        className="button button-secondary"
+        className="settings-chip settings-chip--danger"
         onClick={onClick}
         disabled={busy}
       >

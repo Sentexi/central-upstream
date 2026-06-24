@@ -10,6 +10,7 @@ import {
   RangeBar,
   Card,
 } from "../../core/ui";
+import type { SegmentedControlOption } from "../../core/ui";
 import { LineAreaChart, ComboChart, CHART_COLORS } from "../../core/charts";
 
 // ── Akkzentfarben (Tokens) ────────────────────────────────────────────────────
@@ -42,6 +43,26 @@ function toPct(value: number | null | undefined, lo: number, hi: number): number
   return Math.min(100, Math.max(0, ((value - lo) / (hi - lo)) * 100));
 }
 
+function rangeBarProps(
+  curValue: number | null | undefined,
+  baseline: number | null | undefined,
+  lo: number | null | undefined,
+  hi: number | null | undefined,
+): { value: number; baseline: number; marker: number } {
+  const loN = lo ?? 0;
+  const hiN = hi ?? 100;
+  const fillPct = toPct(curValue, loN, hiN);
+  const basePct = toPct(baseline, loN, hiN);
+  return { value: fillPct, baseline: basePct, marker: fillPct };
+}
+
+function deltaTone(text?: string): "pos" | "neg" | "neutral" {
+  if (!text) return "neutral";
+  if (text.startsWith("+") || text.startsWith("▲")) return "pos";
+  if (text.startsWith("-") || text.startsWith("▼") || text.startsWith("−")) return "neg";
+  return "neutral";
+}
+
 /** Schnelle Datumskürzung für X-Achse: "2024-06-03" -> "03.06" */
 function shortDate(d: string): string {
   const parts = d.split("-");
@@ -56,7 +77,7 @@ const RANGE_OPTIONS = [
   { value: "7d",    label: "7 Tage" },
   { value: "14d",   label: "14 Tage" },
   { value: "30d",   label: "30 Tage" },
-] as const;
+] satisfies SegmentedControlOption[];
 
 // ── Mono-Einheiten-Badge ──────────────────────────────────────────────────────
 
@@ -157,20 +178,6 @@ export function EnergyMonitorView() {
 
   const signals = data?.signals ?? [];
 
-  // ── RangeBar-Prozente berechnen ──────────────────────────────────────────
-  function rangeBarProps(
-    curValue: number | null | undefined,
-    baseline: number | null | undefined,
-    lo: number | null | undefined,
-    hi: number | null | undefined,
-  ): { value: number; baseline: number; marker: number } {
-    const loN = lo ?? 0;
-    const hiN = hi ?? 100;
-    const fillPct = toPct(curValue, loN, hiN);
-    const basePct = toPct(baseline, loN, hiN);
-    return { value: fillPct, baseline: basePct, marker: fillPct };
-  }
-
   // ── Chart-Daten ──────────────────────────────────────────────────────────
   const hrvChartData = (data?.series.hrv ?? [])
     .slice()
@@ -196,14 +203,6 @@ export function EnergyMonitorView() {
       exercise: p.exercise_min ?? 0,
     }));
 
-  // ── Delta-Ton ableiten aus delta_text ────────────────────────────────────
-  function deltaTone(text?: string): "pos" | "neg" | "neutral" {
-    if (!text) return "neutral";
-    if (text.startsWith("+") || text.startsWith("▲")) return "pos";
-    if (text.startsWith("-") || text.startsWith("▼") || text.startsWith("−")) return "neg";
-    return "neutral";
-  }
-
   return (
     <div className="app-grid">
       {/* ── PageHeader ─────────────────────────────────────────────────────── */}
@@ -213,7 +212,7 @@ export function EnergyMonitorView() {
         subtitle="Aggregierte Tages-Metriken mit Readiness-Barometer."
         right={
           <SegmentedControl
-            options={RANGE_OPTIONS as unknown as Array<{ value: string; label: string }>}
+            options={RANGE_OPTIONS}
             value={range}
             onChange={(v) => setRange(v as RangeKey)}
           />
@@ -300,16 +299,18 @@ export function EnergyMonitorView() {
               }
             >
               <ProgressBar value={data.tiles.sleep.score ?? 0} color={ACCENT.violet} />
-              <p
-                style={{
-                  marginTop: 8,
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontSize: 10,
-                  color: "var(--text-low)",
-                }}
-              >
-                Score {data.tiles.sleep.score ?? "–"}/100
-              </p>
+              {data.tiles.sleep.avg != null && (
+                <p
+                  style={{
+                    marginTop: 8,
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: 10,
+                    color: "var(--text-low)",
+                  }}
+                >
+                  Ø {formatDuration(data.tiles.sleep.avg)}
+                </p>
+              )}
             </StatCard>
 
             {/* HRV ── Teal */}
@@ -431,7 +432,7 @@ export function EnergyMonitorView() {
                   color: "var(--text-low)",
                 }}
               >
-                {formatValue(data.tiles.load.exercise_min, 0)} min Exercise · Ziel 30
+                {formatValue(data.tiles.load.exercise_min, 0)} min Exercise · Ziel 10 000
               </p>
             </StatCard>
           </div>

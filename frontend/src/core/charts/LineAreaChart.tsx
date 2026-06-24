@@ -4,6 +4,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -29,6 +30,9 @@ export interface LineAreaChartProps {
   unit?: string;
   valueFormatter?: (value: number) => string;
   xTickFormatter?: (value: string) => string;
+  referenceY?: number;
+  referenceColor?: string;
+  referenceLabel?: string;
 }
 
 /**
@@ -46,6 +50,9 @@ export function LineAreaChart({
   unit,
   valueFormatter,
   xTickFormatter,
+  referenceY,
+  referenceColor = "#7E84A8",
+  referenceLabel,
 }: LineAreaChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const lastIndex = data.length - 1;
@@ -68,6 +75,15 @@ export function LineAreaChart({
           cursor={{ stroke: CHART_COLORS.borderStrong, strokeWidth: 1 }}
           content={<ChartTooltip valueFormatter={valueFormatter} unit={unit} />}
         />
+        {referenceY != null && (
+          <ReferenceLine
+            y={referenceY}
+            stroke={referenceColor}
+            strokeDasharray="5 4"
+            strokeWidth={1.5}
+            label={referenceLabel ? { value: referenceLabel, position: "insideTopRight", fontSize: 10, fill: referenceColor } : undefined}
+          />
+        )}
         <Area
           type="monotone"
           dataKey={dataKey}

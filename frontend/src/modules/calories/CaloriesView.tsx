@@ -244,8 +244,6 @@ function MonoDotLabel({ children, color = "var(--teal)" }: { children: React.Rea
 
 export function CaloriesView() {
   const [text, setText] = useState("");
-  const [dateValue, setDateValue] = useState(todayString());
-  const [useTimestamp, setUseTimestamp] = useState(false);
   const [drafts, setDrafts] = useState<MealEntry[]>([]);
   const [dayEntries, setDayEntries] = useState<MealEntry[]>([]);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
@@ -343,8 +341,7 @@ export function CaloriesView() {
     setSubmitting(true);
     setError(null);
     try {
-      const payload: Record<string, unknown> = { text, date: dateValue };
-      if (useTimestamp) payload.timestamp = new Date().toISOString();
+      const payload: Record<string, unknown> = { text, date: todayString() };
       const res = await fetch("/api/calories/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -725,6 +722,8 @@ export function CaloriesView() {
               height={210}
               unit="kcal"
               valueFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)}
+              referenceY={DAILY_GOAL}
+              referenceColor={CHART_COLORS.textLow}
             />
           ) : (
             <EmptyChart />

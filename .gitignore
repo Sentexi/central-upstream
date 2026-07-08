@@ -16,7 +16,12 @@ backend/app/users.sqlite
 
 # venv (lokal, nicht ins Repo)
 venv/
+.venv/
 backend/venv/
+backend/.venv/
+
+# pytest
+.pytest_cache/
 
 # Node
 node_modules/

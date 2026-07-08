@@ -240,7 +240,7 @@ def get_stats():
     completion_col = repo.safe_column(
         _resolve_column(
             property_map,
-            ["completed_at", "done_at", "finished_at", "closed_at", "completed_on"],
+            ["done_time", "completed_at", "done_at", "finished_at", "closed_at", "completed_on"],
         )
     )
     completion_expr = completion_col or "last_edited_time"

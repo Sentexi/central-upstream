@@ -48,13 +48,13 @@ export function HealthApiKeyActions() {
   };
 
   return (
-    <div className="health-api-key">
+    <div className="settings-subsection health-api-key">
       <div className="health-api-key__header">
-        <span className="settings-label">API Key</span>
+        <span className="settings-subsection__label">API Key</span>
         <div className="health-api-key__buttons">
           <button
             type="button"
-            className="button button-secondary"
+            className="settings-chip"
             onClick={onReveal}
             disabled={busy !== null}
           >
@@ -62,7 +62,7 @@ export function HealthApiKeyActions() {
           </button>
           <button
             type="button"
-            className="button button-secondary"
+            className="settings-chip"
             onClick={onRotate}
             disabled={busy !== null}
           >
@@ -71,7 +71,7 @@ export function HealthApiKeyActions() {
           {revealed && (
             <button
               type="button"
-              className="button button-tertiary"
+              className="settings-chip"
               onClick={onHide}
               disabled={busy !== null}
             >
@@ -92,18 +92,18 @@ export function HealthApiKeyActions() {
           )}
 
           <label className="health-api-key__field">
-            <span className="muted small">{revealed.auth_header}</span>
+            <span className="health-api-key__caption">{revealed.auth_header}</span>
             <div className="health-api-key__row">
               <input
                 type="text"
                 readOnly
-                className="input"
+                className="settings-input"
                 value={revealed.auth_key}
                 onFocus={(event) => event.currentTarget.select()}
               />
               <button
                 type="button"
-                className="button button-tertiary"
+                className="settings-chip"
                 onClick={() => copy(revealed.auth_key)}
               >
                 Kopieren
@@ -113,18 +113,18 @@ export function HealthApiKeyActions() {
 
           {revealed.curl_example && (
             <label className="health-api-key__field">
-              <span className="muted small">curl Beispiel</span>
+              <span className="health-api-key__caption">curl Beispiel</span>
               <div className="health-api-key__row">
                 <textarea
                   readOnly
-                  className="input"
+                  className="settings-input"
                   rows={3}
                   value={revealed.curl_example}
                   onFocus={(event) => event.currentTarget.select()}
                 />
                 <button
                   type="button"
-                  className="button button-tertiary"
+                  className="settings-chip"
                   onClick={() => copy(revealed.curl_example)}
                 >
                   Kopieren

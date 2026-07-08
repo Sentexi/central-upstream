@@ -1,867 +1,262 @@
 import { useEffect, useMemo, useState } from "react";
-import { GlassCard } from "../../core/GlassCard";
 import type {
   FitnessDashboardResponse,
   FitnessSeries,
+  FitnessTile,
   GroupKey,
   RangeKey,
 } from "./api";
 import { fetchFitnessDashboard } from "./api";
+import {
+  PageHeader,
+  SegmentedControl,
+  StatCard,
+  SectionHeader,
+  ProgressBar,
+  Badge,
+  Card,
+} from "../../core/ui";
+import type { SegmentedControlOption, BadgeTone, DeltaTone } from "../../core/ui";
+import {
+  ZoneLineChart,
+  BarChart,
+  ComboChart,
+  DualLineChart,
+  StackedBarLineChart,
+  CHART_COLORS,
+} from "../../core/charts";
 
-const ranges: { key: RangeKey; label: string }[] = [
-  { key: "today", label: "Heute" },
-  { key: "7d", label: "7 Tage" },
-  { key: "14d", label: "14 Tage" },
-  { key: "30d", label: "30 Tage" },
+// ── Akzentfarben (Tokens) ─────────────────────────────────────────────────────
+// Nur teal wird im Layout direkt referenziert (ProgressBar). Die uebrigen Akzente
+// kommen ueber CHART_COLORS in die Charts, deshalb haelt ACCENT bewusst nur teal.
+const ACCENT = {
+  teal: "var(--teal)",
+} as const;
+
+// ── VO2-Zonengrenzen (aus Fitness-Mockup-Script: zoneLine(vo2, 24, 64, …)) ─────
+const VO2_MIN = 24;
+const VO2_MAX = 64;
+const VO2_FAIR_FROM = 35;
+const VO2_GOOD_FROM = 45;
+const VO2_ZONES = [
+  { from: VO2_MIN, to: VO2_FAIR_FROM, tone: "low" as const },
+  { from: VO2_FAIR_FROM, to: VO2_GOOD_FROM, tone: "fair" as const },
+  { from: VO2_GOOD_FROM, to: VO2_MAX, tone: "good" as const },
 ];
 
-const groups: { key: GroupKey; label: string }[] = [
-  { key: "daily", label: "Täglich" },
-  { key: "weekly", label: "Wöchentlich" },
-];
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
-function formatValue(value?: number | null, digits = 1) {
+function formatValue(value?: number | null, digits = 1): string {
   if (value === undefined || value === null || Number.isNaN(value)) return "–";
   return Number(value).toFixed(digits);
 }
 
-function generateTicks(minValue: number, maxValue: number, count = 4) {
-  if (count < 2) return [maxValue];
-
-  if (minValue === maxValue) {
-    const wiggle = minValue === 0 ? 1 : Math.abs(minValue) * 0.25;
-    minValue -= wiggle;
-    maxValue += wiggle;
-  }
-
-  const span = maxValue - minValue || 1;
-  const roughStep = span / (count - 1);
-  const magnitude = 10 ** Math.floor(Math.log10(Math.max(roughStep, 1)));
-  const step = Math.ceil(roughStep / magnitude) * magnitude;
-  const start = Math.floor(minValue / step) * step;
-  const end = Math.ceil(maxValue / step) * step;
-
-  const ticks: number[] = [];
-  for (let v = start; v <= end + step / 2; v += step) {
-    ticks.push(Number(v.toFixed(6)));
-  }
-
-  return ticks;
+/** Tausender-Trennung mit schmalem Leerzeichen (z. B. 45354 -> "45 354"). */
+function formatThousands(value?: number | null): string {
+  if (value === undefined || value === null || Number.isNaN(value)) return "–";
+  return Math.round(value)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
-function formatTickLabel(value: number) {
-  const abs = Math.abs(value);
-  if (abs >= 100) return value.toFixed(0);
-  if (abs >= 10) return value.toFixed(1);
-  return value.toFixed(2);
+/** Datumskuerzung fuer X-Achse: "2026-06-23" -> "23.06". */
+function shortDate(d: string): string {
+  const parts = d.split("-");
+  if (parts.length !== 3) return d;
+  return `${parts[2]}.${parts[1]}`;
 }
 
-function calculateMovingAverage(series: FitnessSeries[], windowSize = 7): FitnessSeries[] {
-  if (windowSize <= 1) return series;
+/** Wochen-Label kuerzen: "2026-W26" -> "W26", sonst Datum kuerzen. */
+function shortWeek(label: string): string {
+  const match = label.match(/W\d{1,2}$/);
+  if (match) return match[0];
+  return shortDate(label);
+}
 
-  return series.map((entry, idx) => {
+function deltaTone(text?: string): DeltaTone {
+  if (!text) return "neutral";
+  if (text.startsWith("+") || text.startsWith("▲")) return "pos";
+  if (text.startsWith("-") || text.startsWith("▼") || text.startsWith("−")) return "neg";
+  return "neutral";
+}
+
+function makeDelta(tile: FitnessTile) {
+  return tile.delta_text
+    ? { text: tile.delta_text, tone: deltaTone(tile.delta_text) }
+    : undefined;
+}
+
+/** Letzter Punkt einer Serie mit gueltigem Wert. */
+function lastValue(series: FitnessSeries[]): number | null {
+  for (let i = series.length - 1; i >= 0; i -= 1) {
+    const v = series[i]?.value;
+    if (typeof v === "number" && !Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+/** VO2-Einstufung anhand der Zonengrenzen (low/fair/good). */
+function vo2Class(value: number | null): { label: string; tone: BadgeTone } | null {
+  if (value == null) return null;
+  if (value >= VO2_GOOD_FROM) return { label: "good", tone: "success" };
+  if (value >= VO2_FAIR_FROM) return { label: "fair", tone: "warning" };
+  return { label: "low", tone: "error" };
+}
+
+/**
+ * Mappt eine FitnessSeries auf Recharts-Daten. Bei weekly wird das week_label
+ * (z. B. "2026-W26") als X-Achsen-Wert genutzt, sonst das gekuerzte Datum.
+ */
+function xLabel(p: { date?: string | null; label?: string | null }, idx: number, weekly: boolean): string {
+  if (weekly) return shortWeek(p.label ?? p.date ?? `${idx}`);
+  return shortDate(p.date ?? `${idx}`);
+}
+
+function toChartData(series: FitnessSeries[], group: GroupKey): Array<Record<string, unknown>> {
+  const weekly = group === "weekly";
+  return series.map((p, idx) => ({
+    x: xLabel(p, idx, weekly),
+    value: p.value,
+  }));
+}
+
+/** 7-Tage gleitender Durchschnitt (fuer den Gewicht-Dual-Line). */
+function movingAverage(series: FitnessSeries[], windowSize = 7): Array<number | null> {
+  if (windowSize <= 1) return series.map((p) => p.value);
+  return series.map((_, idx) => {
     const start = Math.max(0, idx - windowSize + 1);
     const windowValues = series
       .slice(start, idx + 1)
       .map((item) => item.value)
-      .filter((value): value is number => typeof value === "number" && !Number.isNaN(value));
-
-    const avg = windowValues.length ? windowValues.reduce((sum, value) => sum + value, 0) / windowValues.length : null;
-    return { ...entry, value: avg };
+      .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+    if (!windowValues.length) return null;
+    return windowValues.reduce((sum, v) => sum + v, 0) / windowValues.length;
   });
 }
 
-function Barometer({ color, score }: { color?: string; score?: number }) {
-  const safeColor = color ?? "gray";
-  const clamped = Math.max(0, Math.min(score ?? 100, 100));
+// ── Range-/Group-Optionen ─────────────────────────────────────────────────────
+
+const RANGE_OPTIONS = [
+  { value: "today", label: "Heute" },
+  { value: "7d", label: "7 Tage" },
+  { value: "14d", label: "14 Tage" },
+  { value: "30d", label: "30 Tage" },
+] satisfies SegmentedControlOption[];
+
+const GROUP_OPTIONS = [
+  { value: "daily", label: "Täglich" },
+  { value: "weekly", label: "Wöchentlich" },
+] satisfies SegmentedControlOption[];
+
+// ── Mono-Caption ──────────────────────────────────────────────────────────────
+
+function Caption({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`barometer barometer--${safeColor}`} aria-label={`Score ${clamped}`}>
-      <div className="barometer__track">
-        <div className="barometer__fill" style={{ width: `${clamped}%` }} />
-      </div>
-      <span className="barometer__value">{clamped}</span>
-    </div>
+    <p
+      style={{
+        marginTop: 9,
+        fontSize: 11,
+        color: "var(--text-mid)",
+      }}
+    >
+      {children}
+    </p>
   );
 }
 
-function SummaryTile({
+// ── Chart-Legende (Swatch + Label) ────────────────────────────────────────────
+
+function LegendSwatch({ color, line }: { color: string; line?: boolean }) {
+  return (
+    <span
+      style={{
+        width: line ? 11 : 9,
+        height: line ? 2 : 9,
+        borderRadius: 2,
+        background: color,
+        flex: "none",
+      }}
+    />
+  );
+}
+
+function LegendItem({ color, label, line }: { color: string; label: string; line?: boolean }) {
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
+      <LegendSwatch color={color} line={line} />
+      {label}
+    </span>
+  );
+}
+
+// ── Mono-Einheiten-Badge ──────────────────────────────────────────────────────
+
+function UnitBadge({ unit }: { unit: string }) {
+  return (
+    <span
+      style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 11,
+        padding: "3px 9px",
+        borderRadius: 7,
+        border: "1px solid var(--border-strong)",
+        color: "var(--text-mid)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {unit}
+    </span>
+  );
+}
+
+// ── Chart-Panel-Wrapper ───────────────────────────────────────────────────────
+
+function ChartPanel({
   title,
-  primary,
-  secondary,
-  detail,
-  barometerValue,
+  right,
+  children,
 }: {
   title: string;
-  primary: { value?: number | null; unit?: string; delta?: string; color?: string };
-  secondary?: { value?: number | null; unit?: string } | null;
-  detail?: string | null;
-  barometerValue?: number;
+  right?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <GlassCard className="energy-tile">
-      <div className="tile-header">
-        <div className="kicker">{title}</div>
-        <Barometer color={primary.color} score={barometerValue ?? (primary.value ? Math.min(100, primary.value) : 0)} />
+    <Card style={{ padding: "17px 17px 9px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 8,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 15,
+            fontWeight: 600,
+            color: "var(--text-high)",
+          }}
+        >
+          {title}
+        </span>
+        {right ? <div style={{ display: "flex", alignItems: "center", gap: 12 }}>{right}</div> : null}
       </div>
-      <div className="tile-body">
-        <div className="tile-value">
-          <span>{formatValue(primary.value, 1)}</span>
-          {primary.unit ? <span className="unit">{primary.unit}</span> : null}
-        </div>
-        <div className="tile-delta">{primary.delta ?? "–"}</div>
-        {secondary && secondary.value !== undefined && secondary.value !== null ? (
-          <div className="tile-detail">
-            {formatValue(secondary.value, 0)} {secondary.unit ?? ""}
-          </div>
-        ) : null}
-        {detail ? <div className="tile-detail">{detail}</div> : null}
-      </div>
-    </GlassCard>
+      {children}
+    </Card>
   );
 }
 
-function SimpleBarChart({
-  series,
-  title,
-  color = "var(--electric-blue)",
-  unit,
-}: {
-  series: FitnessSeries[];
-  title: string;
-  color?: string;
-  unit?: string;
-}) {
-  const values = series.map((d) => d.value ?? 0);
-  const max = Math.max(...values, 1);
-  const height = 240;
-  const width = Math.max(360, series.length * 36);
-  const margin = { top: 18, right: 16, bottom: 36, left: 52 };
-  const innerHeight = height - margin.top - margin.bottom;
-  const stepWidth = (width - margin.left - margin.right) / Math.max(series.length, 1);
-  const yTicks = generateTicks(0, max, 5);
-  const xTickCount = Math.min(5, series.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((series.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: series.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === series.length - 1
-  );
-
-  if (series.length === 0) {
-    return (
-      <GlassCard className="chart-panel">
-        <div className="chart-panel__header">
-          <div>
-            <span className="kicker">Keine Daten</span>
-            <h4 className="chart-title">{title}</h4>
-          </div>
-        </div>
-        <p className="card-description">Keine Daten im Range.</p>
-      </GlassCard>
-    );
-  }
-
-  const valueToY = (value: number) => height - margin.bottom - (value / max) * innerHeight;
-
+function EmptyChart() {
   return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Trend</span>
-          <h4 className="chart-title">{title}</h4>
-        </div>
-        {unit ? <span className="pill">{unit}</span> : null}
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
-          {yTicks.map((tick) => {
-            const y = valueToY(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          {series.map((d, idx) => {
-            const barHeight = height - margin.bottom - valueToY(d.value ?? 0);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.15;
-            const barWidth = stepWidth * 0.7;
-            return (
-              <g key={`${d.date}-${idx}`}>
-                <rect
-                  x={x}
-                  y={height - margin.bottom - barHeight}
-                  width={barWidth}
-                  height={barHeight}
-                  fill={color}
-                  opacity={0.8}
-                  rx={4}
-                >
-                  <title>
-                    {d.label ?? d.date}: {formatValue(d.value)} {unit ?? ""}
-                  </title>
-                </rect>
-              </g>
-            );
-          })}
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {series[idx].label ?? series[idx].date}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
+    <p style={{ color: "var(--text-mid)", fontSize: 13, padding: "24px 0" }}>
+      Keine Daten im aktuellen Zeitraum.
+    </p>
   );
 }
 
-function StackedBarChart({
-  title,
-  baseSeries,
-  stackedSeries,
-  baseLabel,
-  stackedLabel,
-  baseColor = "#60a5fa",
-  stackedColor = "#fbbf24",
-  unit = "kcal",
-}: {
-  title: string;
-  baseSeries: FitnessSeries[];
-  stackedSeries: FitnessSeries[];
-  baseLabel: string;
-  stackedLabel: string;
-  baseColor?: string;
-  stackedColor?: string;
-  unit?: string;
-}) {
-  const length = Math.max(baseSeries.length, stackedSeries.length);
-  const combined = Array.from({ length }, (_, idx) => {
-    const base = baseSeries[idx];
-    const top = stackedSeries[idx];
-    const label = base?.label ?? top?.label ?? base?.date ?? top?.date ?? `${idx}`;
-    const date = base?.date ?? top?.date ?? `${idx}`;
-    return { base, top, label, date };
-  }).filter((entry) => entry.base || entry.top);
-
-  if (combined.length === 0) {
-    return (
-      <GlassCard className="chart-panel">
-        <div className="chart-panel__header">
-          <div>
-            <span className="kicker">Keine Daten</span>
-            <h4 className="chart-title">{title}</h4>
-          </div>
-        </div>
-        <p className="card-description">Keine Daten im Range.</p>
-      </GlassCard>
-    );
-  }
-
-  const totals = combined.map((entry) => (entry.base?.value ?? 0) + (entry.top?.value ?? 0));
-  const maxTotal = Math.max(...totals, 1);
-  const height = 260;
-  const width = Math.max(380, combined.length * 38);
-  const margin = { top: 18, right: 16, bottom: 36, left: 52 };
-  const innerHeight = height - margin.top - margin.bottom;
-  const stepWidth = (width - margin.left - margin.right) / Math.max(combined.length, 1);
-  const yTicks = generateTicks(0, maxTotal, 5);
-  const yMax = yTicks[yTicks.length - 1] || maxTotal || 1;
-
-  const xTickCount = Math.min(5, combined.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((combined.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: combined.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === combined.length - 1
-  );
-
-  const valueToHeight = (value: number) => (value / yMax) * innerHeight;
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Kalorien</span>
-          <h4 className="chart-title">{title}</h4>
-        </div>
-        <div className="chart-controls" aria-hidden>
-          <span className="pill">{baseLabel}</span>
-          <span className="pill">{stackedLabel}</span>
-        </div>
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
-          {yTicks.map((tick) => {
-            const y = height - margin.bottom - valueToHeight(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          {combined.map((entry, idx) => {
-            const baseVal = entry.base?.value ?? 0;
-            const topVal = entry.top?.value ?? 0;
-            const baseHeight = valueToHeight(baseVal);
-            const topHeight = valueToHeight(topVal);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.15;
-            const barWidth = stepWidth * 0.7;
-            const baseY = height - margin.bottom - baseHeight;
-            const topY = baseY - topHeight;
-            return (
-              <g key={`${entry.date}-${idx}`}>
-                <rect x={x} y={baseY} width={barWidth} height={baseHeight} fill={baseColor} opacity={0.85} rx={4} />
-                <rect x={x} y={topY} width={barWidth} height={topHeight} fill={stackedColor} opacity={0.9} rx={4} />
-                <title>
-                  {entry.label}: Ruheenergie {formatValue(baseVal)} {unit}, Aktiv {formatValue(topVal)} {unit}
-                </title>
-              </g>
-            );
-          })}
-
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {combined[idx].label}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
-
-function ComboChart({
-  title,
-  bars,
-  line,
-  barLabel,
-  lineLabel,
-  barColor = "var(--electric-blue)",
-  lineColor = "#a855f7",
-}: {
-  title: string;
-  bars: FitnessSeries[];
-  line: FitnessSeries[];
-  barLabel: string;
-  lineLabel: string;
-  barColor?: string;
-  lineColor?: string;
-}) {
-  const series = bars.length > 0 ? bars : line;
-  if (series.length === 0) {
-    return (
-      <GlassCard className="chart-panel">
-        <div className="chart-panel__header">
-          <div>
-            <span className="kicker">Keine Daten</span>
-            <h4 className="chart-title">{title}</h4>
-          </div>
-        </div>
-        <p className="card-description">Keine Daten im Range.</p>
-      </GlassCard>
-    );
-  }
-
-  const labels = bars.map((d) => d.label ?? d.date);
-  const allValues = [...bars, ...line].map((d) => d.value ?? 0);
-  const maxValue = Math.max(...allValues, 1);
-  const height = 260;
-  const width = Math.max(380, series.length * 38);
-  const margin = { top: 18, right: 56, bottom: 36, left: 52 };
-  const innerHeight = height - margin.top - margin.bottom - 18;
-  const stepWidth = (width - margin.left - margin.right) / Math.max(series.length, 1);
-  const yTicks = generateTicks(0, maxValue, 5);
-
-  const xTickCount = Math.min(5, series.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((series.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: series.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === series.length - 1
-  );
-
-  const valueToY = (value: number) => height - margin.bottom - (value / maxValue) * innerHeight;
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Trend</span>
-          <h4 className="chart-title">{title}</h4>
-        </div>
-        <div className="chart-controls" aria-hidden>
-          <span className="pill">{barLabel}</span>
-          <span className="pill">{lineLabel}</span>
-        </div>
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
-          {yTicks.map((tick) => {
-            const y = valueToY(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          {bars.map((d, idx) => {
-            const barHeight = height - margin.bottom - valueToY(d.value ?? 0);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.18;
-            const barWidth = stepWidth * 0.5;
-            return (
-              <rect
-                key={`bar-${d.date}-${idx}`}
-                x={x}
-                y={height - margin.bottom - barHeight}
-                width={barWidth}
-                height={barHeight}
-                fill={barColor}
-                opacity={0.65}
-                rx={4}
-              >
-                <title>
-                  {labels[idx]}: {formatValue(d.value)}
-                </title>
-              </rect>
-            );
-          })}
-
-          {line.map((d, idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth * 0.5;
-            const y = valueToY(d.value ?? 0);
-            const next = line[idx + 1];
-            if (!next) {
-              return (
-                <g key={`line-${d.date}-${idx}`}>
-                  <circle cx={x} cy={y} r={3} fill={lineColor} />
-                </g>
-              );
-            }
-            const nextX = margin.left + (idx + 1) * stepWidth + stepWidth * 0.5;
-            const nextY = valueToY(next.value ?? 0);
-            return (
-              <g key={`line-${d.date}-${idx}`}>
-                <line x1={x} x2={nextX} y1={y} y2={nextY} stroke={lineColor} strokeWidth={2} />
-                <circle cx={x} cy={y} r={3} fill={lineColor} />
-              </g>
-            );
-          })}
-
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {labels[idx]}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
-
-function EfficiencyChart({
-  efficiency,
-  stairsUp,
-  stairsDown,
-}: {
-  efficiency: FitnessSeries[];
-  stairsUp: FitnessSeries[];
-  stairsDown: FitnessSeries[];
-}) {
-  const labels = efficiency.map((d) => d.label ?? d.date);
-  const labelIndex = new Map(labels.map((label, idx) => [label, idx]));
-  if (efficiency.length === 0) {
-    return (
-      <GlassCard className="chart-panel">
-        <div className="chart-panel__header">
-          <div>
-            <span className="kicker">Keine Daten</span>
-            <h4 className="chart-title">Efficiency &amp; Mobility</h4>
-          </div>
-        </div>
-        <p className="card-description">Keine Daten im Range.</p>
-      </GlassCard>
-    );
-  }
-
-  const values = efficiency.map((d) => d.value ?? 0);
-  const maxValue = Math.max(...values, 1);
-  const height = 260;
-  const width = Math.max(380, efficiency.length * 38);
-  const margin = { top: 18, right: 16, bottom: 36, left: 52 };
-  const innerHeight = height - margin.top - margin.bottom - 18;
-  const stepWidth = (width - margin.left - margin.right) / Math.max(efficiency.length, 1);
-  const yTicks = generateTicks(0, maxValue, 5);
-
-  const xTickCount = Math.min(5, efficiency.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((efficiency.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: efficiency.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === efficiency.length - 1
-  );
-
-  const valueToY = (value: number) => height - margin.bottom - (value / maxValue) * innerHeight;
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Efficiency</span>
-          <h4 className="chart-title">Efficiency &amp; Mobility</h4>
-        </div>
-        <div className="chart-controls" aria-hidden>
-          <span className="pill">HR/Speed</span>
-          <span className="pill">Stairs</span>
-        </div>
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Efficiency Chart">
-          {yTicks.map((tick) => {
-            const y = valueToY(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-
-          {efficiency.map((d, idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth * 0.5;
-            const y = valueToY(d.value ?? 0);
-            const next = efficiency[idx + 1];
-            if (next) {
-              const nextX = margin.left + (idx + 1) * stepWidth + stepWidth * 0.5;
-              const nextY = valueToY(next.value ?? 0);
-              return (
-                <g key={`eff-${d.date}-${idx}`}>
-                  <line x1={x} x2={nextX} y1={y} y2={nextY} stroke="#22d3ee" strokeWidth={2.2} />
-                  <circle cx={x} cy={y} r={3} fill="#22d3ee" />
-                </g>
-              );
-            }
-            return <circle key={`eff-${d.date}-${idx}`} cx={x} cy={y} r={3} fill="#22d3ee" />;
-          })}
-
-          {stairsUp.map((d) => {
-            const label = d.label ?? d.date;
-            const idx = labelIndex.get(label ?? "");
-            if (idx === undefined) return null;
-            const barHeight = height - margin.bottom - valueToY(d.value ?? 0);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.1;
-            const barWidth = stepWidth * 0.2;
-            return (
-              <rect
-                key={`up-${d.date}-${idx}`}
-                x={x}
-                y={height - margin.bottom - barHeight}
-                width={barWidth}
-                height={barHeight}
-                fill="#a78bfa"
-                opacity={0.7}
-                rx={3}
-              />
-            );
-          })}
-
-          {stairsDown.map((d) => {
-            const label = d.label ?? d.date;
-            const idx = labelIndex.get(label ?? "");
-            if (idx === undefined) return null;
-            const barHeight = height - margin.bottom - valueToY(d.value ?? 0);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.75;
-            const barWidth = stepWidth * 0.2;
-            return (
-              <rect
-                key={`down-${d.date}-${idx}`}
-                x={x}
-                y={height - margin.bottom - barHeight}
-                width={barWidth}
-                height={barHeight}
-                fill="#f97316"
-                opacity={0.7}
-                rx={3}
-              />
-            );
-          })}
-
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {labels[idx]}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
-
-function LineChart({
-  title,
-  primary,
-  secondary,
-  unit,
-  primaryLabel,
-  secondaryLabel,
-  primaryColor = "var(--electric-blue)",
-  secondaryColor = "#94a3b8",
-  primaryStrokeWidth = 2.2,
-  secondaryStrokeWidth = 1.3,
-  primaryPointRadius = 3,
-  secondaryPointRadius = 3,
-  yMin,
-  yMax,
-  backgroundBands,
-}: {
-  title: string;
-  primary: FitnessSeries[];
-  secondary?: FitnessSeries[];
-  unit?: string;
-  primaryLabel?: string;
-  secondaryLabel?: string;
-  primaryColor?: string;
-  secondaryColor?: string;
-  primaryStrokeWidth?: number;
-  secondaryStrokeWidth?: number;
-  primaryPointRadius?: number;
-  secondaryPointRadius?: number;
-  yMin?: number;
-  yMax?: number;
-  backgroundBands?: { from: number; to: number; color: string; opacity?: number }[];
-}) {
-  const baseSeries = primary.length > 0 ? primary : secondary ?? [];
-  if (baseSeries.length === 0) {
-    return (
-      <GlassCard className="chart-panel">
-        <div className="chart-panel__header">
-          <div>
-            <span className="kicker">Keine Daten</span>
-            <h4 className="chart-title">{title}</h4>
-          </div>
-        </div>
-        <p className="card-description">Keine Daten im Range.</p>
-      </GlassCard>
-    );
-  }
-
-  const labels = baseSeries.map((d) => d.label ?? d.date);
-  const allValues = [...primary, ...(secondary ?? [])]
-    .map((d) => d.value)
-    .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
-  const minValue = allValues.length ? Math.min(...allValues) : 0;
-  const maxValue = allValues.length ? Math.max(...allValues) : 1;
-  const desiredMin = yMin !== undefined ? Math.min(yMin, minValue) : minValue;
-  const desiredMax = yMax !== undefined ? Math.max(yMax, maxValue) : maxValue;
-  const yTicks = generateTicks(desiredMin, desiredMax, 5);
-  const yMinValue = yTicks[0] ?? desiredMin;
-  const yMaxValue = yTicks[yTicks.length - 1] ?? Math.max(desiredMax, 1);
-  const span = yMaxValue - yMinValue || 1;
-
-  const height = 260;
-  const width = Math.max(380, baseSeries.length * 38);
-  const margin = { top: 18, right: 56, bottom: 36, left: 52 };
-  const innerHeight = height - margin.top - margin.bottom - 18;
-  const stepWidth = (width - margin.left - margin.right) / Math.max(baseSeries.length, 1);
-  const chartWidth = width - margin.left - margin.right;
-
-  const xTickCount = Math.min(5, baseSeries.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((baseSeries.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: baseSeries.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === baseSeries.length - 1
-  );
-
-  const valueToY = (value: number) => height - margin.bottom - ((value - yMinValue) / span) * innerHeight;
-
-  const renderSeries = (
-    series: FitnessSeries[],
-    color: string,
-    strokeWidth: number,
-    pointRadius: number,
-    keyPrefix: string
-  ) => {
-    type ChartPoint = { x: number; y: number; key: string };
-
-    const points: ChartPoint[] = [];
-    const segments: ChartPoint[][] = [];
-    let currentSegment: ChartPoint[] = [];
-
-    series.forEach((d, idx) => {
-      if (d.value === null || d.value === undefined || Number.isNaN(d.value)) {
-        if (currentSegment.length) {
-          segments.push(currentSegment);
-          currentSegment = [];
-        }
-        return;
-      }
-
-      const x = margin.left + idx * stepWidth + stepWidth * 0.5;
-      const y = valueToY(d.value);
-      const point = { x, y, key: `${keyPrefix}-point-${d.date ?? idx}-${idx}` };
-      points.push(point);
-      currentSegment.push(point);
-    });
-
-    if (currentSegment.length) {
-      segments.push(currentSegment);
-    }
-
-    return (
-      <g key={`${keyPrefix}-series`}>
-        {segments.map((segment, segmentIdx) => (
-          segment.length > 1 ? (
-            <path
-              key={`${keyPrefix}-path-${segmentIdx}`}
-              d={segment.map((pt, idx) => `${idx === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
-              stroke={color}
-              strokeWidth={strokeWidth}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          ) : null
-        ))}
-        {points.map((point) => (
-          <circle key={point.key} cx={point.x} cy={point.y} r={pointRadius} fill={color} />
-        ))}
-      </g>
-    );
-  };
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Trend</span>
-          <h4 className="chart-title">{title}</h4>
-        </div>
-        <div className="chart-controls" aria-hidden>
-          {unit ? <span className="pill">{unit}</span> : null}
-          {primaryLabel ? <span className="pill">{primaryLabel}</span> : null}
-          {secondary && secondaryLabel ? <span className="pill">{secondaryLabel}</span> : null}
-        </div>
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
-          {backgroundBands?.map((band, idx) => {
-            const bandStart = Math.max(Math.min(band.from, band.to), yMinValue);
-            const bandEnd = Math.min(Math.max(band.from, band.to), yMaxValue);
-            if (bandEnd <= bandStart) return null;
-
-            const yTop = valueToY(bandEnd);
-            const yBottom = valueToY(bandStart);
-            const bandHeight = yBottom - yTop;
-
-            return (
-              <rect
-                key={`band-${idx}`}
-                x={margin.left}
-                y={yTop}
-                width={chartWidth}
-                height={bandHeight}
-                fill={band.color}
-                opacity={band.opacity ?? 0.25}
-              />
-            );
-          })}
-
-          {yTicks.map((tick) => {
-            const y = valueToY(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-
-          {secondary ? renderSeries(secondary, secondaryColor, secondaryStrokeWidth, secondaryPointRadius, "secondary") : null}
-          {renderSeries(primary, primaryColor, primaryStrokeWidth, primaryPointRadius, "primary")}
-
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {labels[idx]}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
+// ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 export function FitnessDashboardView() {
   const [range, setRange] = useState<RangeKey>("7d");
@@ -878,238 +273,488 @@ export function FitnessDashboardView() {
       .then((res) => {
         if (mounted) setData(res);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error(err);
-        if (mounted) setError(err.message);
+        if (mounted) setError(err instanceof Error ? err.message : String(err));
       })
-      .finally(() => mounted && setLoading(false));
-
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
     return () => {
       mounted = false;
     };
   }, [range, group]);
 
-  const exerciseData = group === "weekly" ? data?.charts.exercise.weekly ?? [] : data?.charts.exercise.daily ?? [];
-  const stepsData =
-    group === "weekly" ? data?.charts.steps_distance.steps_weekly ?? [] : data?.charts.steps_distance.steps ?? [];
-  const distanceData =
-    group === "weekly" ? data?.charts.steps_distance.distance_weekly ?? [] : data?.charts.steps_distance.distance ?? [];
-  const activeData =
-    group === "weekly" ? data?.charts.active_floors.active_kcal_weekly ?? [] : data?.charts.active_floors.active_kcal ?? [];
-  const restingData =
-    group === "weekly"
-      ? data?.charts.active_floors.resting_kcal_weekly ?? []
-      : data?.charts.active_floors.resting_kcal ?? [];
-  const weightSeries = group === "weekly" ? data?.charts.weight.weekly ?? [] : data?.charts.weight.daily ?? [];
-  const vo2Series = group === "weekly" ? data?.charts.vo2max.weekly ?? [] : data?.charts.vo2max.daily ?? [];
-  const vo2Values = vo2Series
-    .map((d) => d.value)
-    .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
-  const vo2Min = vo2Values.length ? Math.min(30, ...vo2Values) : 30;
-  const vo2Max = vo2Values.length ? Math.max(60, ...vo2Values) : 60;
+  const weekly = group === "weekly";
 
-  const efficiencySeries = data?.charts.efficiency.efficiency_index ?? [];
-  const stairsUp = data?.charts.efficiency.stair_up ?? [];
-  const stairsDown = data?.charts.efficiency.stair_down ?? [];
-  const weightMovingAverage = useMemo(() => calculateMovingAverage(weightSeries, 7), [weightSeries]);
+  // ── Serien je nach Granularitaet (daily/weekly) ──────────────────────────────
+  const exerciseSeries = weekly
+    ? data?.charts.exercise.weekly ?? []
+    : data?.charts.exercise.daily ?? [];
+  const stepsSeries = weekly
+    ? data?.charts.steps_distance.steps_weekly ?? []
+    : data?.charts.steps_distance.steps ?? [];
+  const distanceSeries = weekly
+    ? data?.charts.steps_distance.distance_weekly ?? []
+    : data?.charts.steps_distance.distance ?? [];
+  const weightSeries = weekly ? data?.charts.weight.weekly ?? [] : data?.charts.weight.daily ?? [];
+  const vo2Series = weekly ? data?.charts.vo2max.weekly ?? [] : data?.charts.vo2max.daily ?? [];
 
-  const summaryTiles = useMemo(() => {
-    if (!data) return null;
-    return [
-      {
-        title: data.tiles.volume.label,
-        primary: {
-          value: data.tiles.volume.value,
-          unit: data.tiles.volume.unit,
-          delta: data.tiles.volume.delta_text,
-          color: data.tiles.volume.color,
-        },
-        detail: data.tiles.volume.detail,
-      },
-      {
-        title: data.tiles.consistency.label,
-        primary: {
-          value: data.tiles.consistency.value,
-          unit: data.tiles.consistency.unit,
-          color: data.tiles.consistency.color,
-          delta: data.tiles.consistency.delta_text,
-        },
-        detail:
-          data.tiles.consistency.streak || data.tiles.consistency.longest
-            ? `Streak: ${data.tiles.consistency.streak ?? 0} · Longest: ${data.tiles.consistency.longest ?? 0}`
-            : undefined,
-      },
-      {
-        title: data.tiles.distance.label,
-        primary: {
-          value: data.tiles.distance.value,
-          unit: data.tiles.distance.unit,
-          color: data.tiles.distance.color,
-          delta: data.tiles.distance.delta_text,
-        },
-        secondary: data.tiles.distance.secondary
-          ? { value: data.tiles.distance.secondary, unit: data.tiles.distance.secondary_unit ?? "Steps" }
-          : undefined,
-      },
-      {
-        title: data.tiles.efficiency.label,
-        primary: {
-          value: data.tiles.efficiency.value,
-          unit: data.tiles.efficiency.unit,
-          color: data.tiles.efficiency.color,
-          delta: data.tiles.efficiency.delta_text,
-        },
-      },
-      {
-        title: data.tiles.mobility.label,
-        primary: {
-          value: data.tiles.mobility.value,
-          unit: data.tiles.mobility.unit,
-          color: data.tiles.mobility.color,
-          delta: data.tiles.mobility.delta_text,
-        },
-      },
-    ];
-  }, [data]);
+  // ── VO2-Chart + Karte ────────────────────────────────────────────────────────
+  const vo2ChartData = useMemo(() => toChartData(vo2Series, group), [vo2Series, group]);
+  const vo2Latest = useMemo(() => lastValue(vo2Series), [vo2Series]);
+  const vo2Badge = vo2Class(vo2Latest);
+
+  // ── Exercise-Chart ───────────────────────────────────────────────────────────
+  const exerciseChartData = useMemo(() => toChartData(exerciseSeries, group), [exerciseSeries, group]);
+
+  // ── Steps & Distanz Combo ────────────────────────────────────────────────────
+  const stepsComboData = useMemo(() => {
+    const length = Math.max(stepsSeries.length, distanceSeries.length);
+    return Array.from({ length }, (_, idx) => {
+      const s = stepsSeries[idx];
+      const d = distanceSeries[idx];
+      const src = s ?? d ?? {};
+      return {
+        x: xLabel(src, idx, weekly),
+        steps: s?.value ?? null,
+        distance: d?.value ?? null,
+      };
+    });
+  }, [stepsSeries, distanceSeries, weekly]);
+
+  // ── Gewicht Dual-Line (kg + 7-Tage-Ø) ────────────────────────────────────────
+  const weightChartData = useMemo(() => {
+    const ma = movingAverage(weightSeries, 7);
+    return weightSeries.map((p, idx) => ({
+      x: xLabel(p, idx, weekly),
+      weight: p.value,
+      avg: ma[idx],
+    }));
+  }, [weightSeries, weekly]);
+
+  // ── Sekundaere Sektion: Bestandsdaten (Mobility, Floors, Efficiency) ──────────
+
+  // Mobility-Kennzahl (Walking-Speed) aus tiles.mobility.
+  const mobilityTile = data?.tiles.mobility;
+
+  // Aktivitaet & Floors: resting/active kcal (gestapelt) + floors als Linie.
+  // Granularitaet respektieren (daily vs. weekly), wie bei den uebrigen Charts.
+  const activeKcalSeries = weekly
+    ? data?.charts.active_floors.active_kcal_weekly ?? []
+    : data?.charts.active_floors.active_kcal ?? [];
+  const restingKcalSeries = weekly
+    ? data?.charts.active_floors.resting_kcal_weekly ?? []
+    : data?.charts.active_floors.resting_kcal ?? [];
+  const floorsSeries = weekly
+    ? data?.charts.active_floors.floors_weekly ?? []
+    : data?.charts.active_floors.floors ?? [];
+
+  const activeFloorsData = useMemo(() => {
+    const length = Math.max(restingKcalSeries.length, activeKcalSeries.length, floorsSeries.length);
+    return Array.from({ length }, (_, idx) => {
+      const resting = restingKcalSeries[idx];
+      const active = activeKcalSeries[idx];
+      const floors = floorsSeries[idx];
+      const src = resting ?? active ?? floors ?? {};
+      return {
+        x: xLabel(src, idx, weekly),
+        resting_kcal: resting?.value ?? null,
+        active_kcal: active?.value ?? null,
+        floors: floors?.value ?? null,
+      };
+    });
+  }, [restingKcalSeries, activeKcalSeries, floorsSeries, weekly]);
+
+  // Efficiency-Trend: efficiency_index (Linie, rechte Achse) + stair_up/stair_down
+  // (gruppierte Balken). Diese Serien haben kein weekly-Pendant, daher daily.
+  const efficiencyIndexSeries = data?.charts.efficiency.efficiency_index ?? [];
+  const stairUpSeries = data?.charts.efficiency.stair_up ?? [];
+  const stairDownSeries = data?.charts.efficiency.stair_down ?? [];
+
+  const efficiencyData = useMemo(() => {
+    const length = Math.max(
+      efficiencyIndexSeries.length,
+      stairUpSeries.length,
+      stairDownSeries.length,
+    );
+    return Array.from({ length }, (_, idx) => {
+      const eff = efficiencyIndexSeries[idx];
+      const up = stairUpSeries[idx];
+      const down = stairDownSeries[idx];
+      const src = eff ?? up ?? down ?? {};
+      return {
+        // efficiency_index/stairs sind immer daily (kein weekly-Pendant in der API).
+        x: xLabel(src, idx, false),
+        efficiency_index: eff?.value ?? null,
+        stair_up: up?.value ?? null,
+        stair_down: down?.value ?? null,
+      };
+    });
+  }, [efficiencyIndexSeries, stairUpSeries, stairDownSeries]);
 
   return (
     <div className="app-grid">
-      <header className="app-header">
-        <span className="kicker">Health</span>
-        <h1 className="title">Fitness Dashboard</h1>
-        <p className="subtitle">Weekly Volume, Consistency, Efficiency Proxy und Mobility Trends.</p>
-        <div className="chart-controls" role="group" aria-label="Zeitraum wählen">
-          {ranges.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`pill ${range === item.key ? "pill--active" : ""}`.trim()}
-              onClick={() => setRange(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <div className="chart-controls" role="group" aria-label="Gruppierung wählen">
-          {groups.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`pill ${group === item.key ? "pill--active" : ""}`.trim()}
-              onClick={() => setGroup(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      <section className="stack">
-        <div className="section-heading">Summary</div>
-        {loading && (
-          <GlassCard glow className="loader">
-            <span className="kicker">Loading</span>
-            <h3 className="card-title">Fitness Dashboard wird geladen...</h3>
-            <p className="card-description">Fitness Volume, Consistency und Efficiency werden vorbereitet.</p>
-          </GlassCard>
-        )}
-        {error && (
-          <GlassCard className="error-card">
-            <h3 className="card-title">Fehler</h3>
-            <p className="card-description">{error}</p>
-          </GlassCard>
-        )}
-        {summaryTiles && !loading && (
-          <div className="grid-cards summary-grid">
-            {summaryTiles.map((tile) => (
-              <SummaryTile
-                key={tile.title}
-                title={tile.title}
-                primary={tile.primary}
-                secondary={tile.secondary}
-                detail={tile.detail}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {data && !loading && (
-        <section className="stack">
-          <div className="section-heading">Trends</div>
-          <div className="grid-cards charts-grid">
-            <StackedBarChart
-              title="Kalorienübersicht"
-              baseSeries={restingData}
-              stackedSeries={activeData}
-              baseLabel="Ruheenergie"
-              stackedLabel="Aktive kcal"
-              baseColor="#60a5fa"
-              stackedColor="#fbbf24"
-              unit="kcal"
+      {/* ── PageHeader ──────────────────────────────────────────────────────── */}
+      <PageHeader
+        eyebrow="HEALTH"
+        title="Fitness Dashboard"
+        subtitle="Weekly Volume, Consistency, Efficiency-Proxy und Mobility-Trends."
+        right={
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <SegmentedControl
+              options={RANGE_OPTIONS}
+              value={range}
+              onChange={(v) => setRange(v as RangeKey)}
             />
-            <LineChart
-              title="Gewicht"
-              primary={weightMovingAverage}
-              secondary={weightSeries}
-              primaryLabel="7D Moving Average"
-              secondaryLabel="Gewicht"
-              unit="kg"
-              primaryColor="#fbbf24"
-              secondaryColor="#fbbf24"
-              primaryStrokeWidth={3.2}
-              secondaryStrokeWidth={1.2}
-              primaryPointRadius={4.2}
-              secondaryPointRadius={2.4}
-            />
-            <LineChart
-              title="VO2 Max"
-              primary={vo2Series}
-              unit="ml/kg/min"
-              primaryLabel="VO2 Max"
-              primaryColor="#fca5a5"
-              primaryStrokeWidth={2.4}
-              primaryPointRadius={3.2}
-              yMin={vo2Min}
-              yMax={vo2Max}
-              backgroundBands={[
-                { from: 60, to: vo2Max, color: "#93c5fd", opacity: 0.25 },
-                { from: 52, to: 59.999, color: "#a7f3d0", opacity: 0.25 },
-                { from: 45, to: 51.999, color: "#6ee7b7", opacity: 0.25 },
-                { from: 38, to: 44.999, color: "#facc15", opacity: 0.25 },
-                { from: vo2Min, to: 37.999, color: "#fca5a5", opacity: 0.25 },
-              ]}
-            />
-            <EfficiencyChart efficiency={efficiencySeries} stairsUp={stairsUp} stairsDown={stairsDown} />
-            <SimpleBarChart series={exerciseData} title="Exercise-Minuten" color="#22d3ee" unit={group === "weekly" ? "min/W" : "min"} />
-            <ComboChart
-              title="Steps & Distanz"
-              bars={stepsData}
-              line={distanceData}
-              barLabel="Steps"
-              lineLabel="km"
-              barColor="var(--electric-blue)"
-              lineColor="#67e8f9"
+            <SegmentedControl
+              options={GROUP_OPTIONS}
+              value={group}
+              onChange={(v) => setGroup(v as GroupKey)}
             />
           </div>
-        </section>
+        }
+      />
+
+      {/* ── Loading / Error ─────────────────────────────────────────────────── */}
+      {loading && (
+        <Card>
+          <span
+            style={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10,
+              letterSpacing: "0.15em",
+              color: "var(--text-low)",
+              textTransform: "uppercase",
+            }}
+          >
+            Loading
+          </span>
+          <p style={{ marginTop: 8, color: "var(--text-mid)", fontSize: 14 }}>
+            Fitness Dashboard wird geladen…
+          </p>
+        </Card>
+      )}
+      {error && (
+        <Card style={{ borderTop: "2px solid var(--coral)" }}>
+          <p style={{ color: "var(--coral)", fontWeight: 600 }}>Fehler</p>
+          <p style={{ marginTop: 6, color: "var(--text-mid)", fontSize: 13 }}>{error}</p>
+        </Card>
       )}
 
-      {data && data.notes && (
-        <section className="stack">
-          <div className="section-heading">Progress Notes</div>
-          <GlassCard>
-            {data.notes.length === 0 ? (
-              <p className="card-description">Keine datengetriebenen Hinweise im aktuellen Range.</p>
-            ) : (
-              <ul className="signal-list">
-                {data.notes.map((note) => (
-                  <li key={note}>{note}</li>
-                ))}
-              </ul>
-            )}
-          </GlassCard>
-        </section>
+      {data && !loading && (
+        <>
+          {/* ── Summary-Karten ──────────────────────────────────────────────── */}
+          <SectionHeader label="Summary" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {/* Weekly Volume */}
+            <StatCard
+              eyebrow="Weekly Volume"
+              value={formatValue(data.tiles.volume.value, 1)}
+              unit={data.tiles.volume.unit ?? "min"}
+              delta={makeDelta(data.tiles.volume)}
+            >
+              {data.tiles.volume.detail ? <Caption>{data.tiles.volume.detail}</Caption> : null}
+            </StatCard>
+
+            {/* Consistency */}
+            {(() => {
+              const tile = data.tiles.consistency;
+              // Annahme: die Einheit kodiert das Wochen-Soll als "/7" (aktive Tage von 7).
+              // Ziffern aus der Unit ziehen ("/7" -> 7), Fallback 7 falls kein Wert da ist.
+              const total = Number((tile.unit ?? "/7").replace(/[^\d]/g, "")) || 7;
+              const active = tile.value ?? 0;
+              const pct = total > 0 ? (active / total) * 100 : 0;
+              return (
+                <StatCard eyebrow="Consistency" value={formatValue(active, 1)} unit={tile.unit ?? "/7"}>
+                  <ProgressBar value={pct} from={ACCENT.teal} to="var(--teal-bright)" />
+                  <Caption>
+                    Streak {tile.streak ?? 0} · Longest {tile.longest ?? 0}
+                  </Caption>
+                </StatCard>
+              );
+            })()}
+
+            {/* Distance & Steps */}
+            <StatCard
+              eyebrow="Distance & Steps"
+              value={formatValue(data.tiles.distance.value, 1)}
+              unit={data.tiles.distance.unit ?? "km"}
+              delta={makeDelta(data.tiles.distance)}
+            >
+              {data.tiles.distance.secondary != null ? (
+                <Caption>
+                  {formatThousands(data.tiles.distance.secondary)}{" "}
+                  {data.tiles.distance.secondary_unit ?? "Steps"} gesamt
+                </Caption>
+              ) : null}
+            </StatCard>
+
+            {/* Efficiency Proxy */}
+            <StatCard
+              eyebrow="Efficiency Proxy"
+              value={formatValue(data.tiles.efficiency.value, 1)}
+              unit={data.tiles.efficiency.unit ?? "HR/Speed"}
+              delta={makeDelta(data.tiles.efficiency)}
+            >
+              {data.tiles.efficiency.detail ? (
+                <Caption>{data.tiles.efficiency.detail}</Caption>
+              ) : (
+                <Caption>Baseline wird aufgebaut</Caption>
+              )}
+            </StatCard>
+
+            {/* VO2 Max (aus charts.vo2max abgeleitet, Badge nach Zonengrenzen) */}
+            <StatCard eyebrow="VO₂ Max" value={formatValue(vo2Latest, 1)} unit="ml/kg">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {vo2Badge ? <Badge tone={vo2Badge.tone}>{vo2Badge.label}</Badge> : null}
+                <span style={{ fontSize: 11, color: "var(--text-mid)" }}>Altersnorm 35–45</span>
+              </div>
+            </StatCard>
+          </div>
+
+          {/* ── Trends ──────────────────────────────────────────────────────── */}
+          <SectionHeader label="Trends" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {/* VO2 Max ── Zonen-Linie */}
+            <ChartPanel
+              title="VO₂ Max"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.green} label="good" />
+                  <LegendItem color={CHART_COLORS.amber} label="fair" />
+                  <LegendItem color={CHART_COLORS.coral} label="low" />
+                </>
+              }
+            >
+              {vo2ChartData.length ? (
+                <ZoneLineChart
+                  data={vo2ChartData}
+                  xKey="x"
+                  dataKey="value"
+                  zones={VO2_ZONES}
+                  color={CHART_COLORS.teal}
+                  height={210}
+                  yMin={VO2_MIN}
+                  yMax={VO2_MAX}
+                  unit="ml/kg/min"
+                  valueFormatter={(v) => v.toFixed(0)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+
+            {/* Exercise-Minuten ── Teal-Balken */}
+            <ChartPanel title="Exercise-Minuten" right={<UnitBadge unit={weekly ? "min/W" : "min"} />}>
+              {exerciseChartData.length ? (
+                <BarChart
+                  data={exerciseChartData}
+                  dataKey="value"
+                  xKey="x"
+                  color={CHART_COLORS.teal}
+                  height={210}
+                  unit="min"
+                  valueFormatter={(v) => v.toFixed(0)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+
+            {/* Steps & Distanz ── Combo (Indigo-Balken + Teal-Linie) */}
+            <ChartPanel
+              title="Steps & Distanz"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.indigo} label="Steps" />
+                  <LegendItem color={CHART_COLORS.teal} label="km" line />
+                </>
+              }
+            >
+              {stepsComboData.length ? (
+                <ComboChart
+                  data={stepsComboData}
+                  xKey="x"
+                  bars={[{ dataKey: "steps", name: "Steps", color: CHART_COLORS.indigo }]}
+                  line={{ dataKey: "distance", name: "km", color: CHART_COLORS.teal }}
+                  height={210}
+                  leftFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${Math.round(v)}`)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+
+            {/* Gewicht ── Dual-Line (Amber kg + Violet gestrichelt 7T-Ø) */}
+            <ChartPanel
+              title="Gewicht"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.amber} label="kg" line />
+                  <LegendItem color={CHART_COLORS.violet} label="7D Ø" line />
+                </>
+              }
+            >
+              {weightChartData.length ? (
+                <DualLineChart
+                  data={weightChartData}
+                  xKey="x"
+                  primary={{ dataKey: "weight", name: "kg", color: CHART_COLORS.amber }}
+                  secondary={{ dataKey: "avg", name: "7D Ø", color: CHART_COLORS.violet, dashed: true }}
+                  height={210}
+                  unit="kg"
+                  valueFormatter={(v) => v.toFixed(1)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+          </div>
+
+          {/* ── Weitere Metriken (Bestandsdaten im Aqua-Operator-Look) ──────── */}
+          <SectionHeader label="Weitere Metriken" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {/* Mobility (Walking-Speed) ── StatCard mit Delta */}
+            <StatCard
+              eyebrow={mobilityTile?.label ?? "Mobility"}
+              value={formatValue(mobilityTile?.value, 1)}
+              unit={mobilityTile?.unit ?? "km/h"}
+              delta={mobilityTile ? makeDelta(mobilityTile) : undefined}
+            >
+              {mobilityTile?.detail ? (
+                <Caption>{mobilityTile.detail}</Caption>
+              ) : (
+                <Caption>Walking-Speed im Zeitraum</Caption>
+              )}
+            </StatCard>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {/* Aktivitaet & Floors ── gestapelte kcal-Balken + Floors-Linie */}
+            <ChartPanel
+              title="Aktivität & Floors"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.indigo} label="Ruhe kcal" />
+                  <LegendItem color={CHART_COLORS.amber} label="Aktiv kcal" />
+                  <LegendItem color={CHART_COLORS.teal} label="Floors" line />
+                </>
+              }
+            >
+              {activeFloorsData.length ? (
+                <StackedBarLineChart
+                  data={activeFloorsData}
+                  xKey="x"
+                  bars={[
+                    { dataKey: "resting_kcal", name: "Ruhe kcal", color: CHART_COLORS.indigo },
+                    { dataKey: "active_kcal", name: "Aktiv kcal", color: CHART_COLORS.amber },
+                  ]}
+                  line={{ dataKey: "floors", name: "Floors", color: CHART_COLORS.teal }}
+                  height={210}
+                  valueFormatter={(v) => v.toFixed(0)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+
+            {/* Efficiency-Trend ── Index (rechte Achse) + Stairs (Balken) */}
+            <ChartPanel
+              title="Efficiency-Trend"
+              right={
+                <>
+                  <LegendItem color={CHART_COLORS.violet} label="Stairs ▲" />
+                  <LegendItem color={CHART_COLORS.coral} label="Stairs ▼" />
+                  <LegendItem color={CHART_COLORS.teal} label="Index" line />
+                </>
+              }
+            >
+              {efficiencyData.length ? (
+                <ComboChart
+                  data={efficiencyData}
+                  xKey="x"
+                  dualAxis
+                  bars={[
+                    { dataKey: "stair_up", name: "Stairs ▲", color: CHART_COLORS.violet },
+                    { dataKey: "stair_down", name: "Stairs ▼", color: CHART_COLORS.coral },
+                  ]}
+                  line={{ dataKey: "efficiency_index", name: "Index", color: CHART_COLORS.teal }}
+                  height={210}
+                  leftFormatter={(v) => v.toFixed(0)}
+                  rightFormatter={(v) => v.toFixed(1)}
+                />
+              ) : (
+                <EmptyChart />
+              )}
+            </ChartPanel>
+          </div>
+
+          {/* ── Progress Notes ──────────────────────────────────────────────── */}
+          {data.notes && (
+            <>
+              <SectionHeader label="Progress Notes" />
+              <Card>
+                {data.notes.length === 0 ? (
+                  <p style={{ color: "var(--text-mid)", fontSize: 13 }}>
+                    Keine datengetriebenen Hinweise im aktuellen Zeitraum.
+                  </p>
+                ) : (
+                  <ul
+                    style={{
+                      listStyle: "none",
+                      margin: 0,
+                      padding: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    {data.notes.map((note) => (
+                      <li
+                        key={note}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: "var(--radius-card)",
+                          background: "var(--raised)",
+                          color: "var(--soft)",
+                          fontSize: 13,
+                          borderLeft: "3px solid var(--teal)",
+                        }}
+                      >
+                        {note}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            </>
+          )}
+        </>
       )}
     </div>
   );

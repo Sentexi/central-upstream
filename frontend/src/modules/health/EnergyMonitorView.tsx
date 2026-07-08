@@ -1,21 +1,35 @@
 import { useEffect, useState } from "react";
-import { GlassCard } from "../../core/GlassCard";
 import type { RangeKey, EnergyMonitorResponse, MetricPoint, ActivityPoint } from "./api";
 import { fetchEnergyMonitor } from "./api";
+import {
+  PageHeader,
+  SegmentedControl,
+  StatCard,
+  SectionHeader,
+  ProgressBar,
+  RangeBar,
+  Card,
+} from "../../core/ui";
+import type { SegmentedControlOption } from "../../core/ui";
+import { LineAreaChart, ComboChart, CHART_COLORS } from "../../core/charts";
 
-const ranges: { key: RangeKey; label: string }[] = [
-  { key: "today", label: "Heute" },
-  { key: "7d", label: "7 Tage" },
-  { key: "14d", label: "14 Tage" },
-  { key: "30d", label: "30 Tage" },
-];
+// ── Akkzentfarben (Tokens) ────────────────────────────────────────────────────
+const ACCENT = {
+  amber: "var(--amber)",
+  violet: "var(--violet)",
+  teal: "var(--teal)",
+  coral: "var(--coral)",
+  indigo: "var(--indigo)",
+} as const;
 
-function formatValue(value?: number | null, digits = 1) {
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+function formatValue(value?: number | null, digits = 1): string {
   if (value === undefined || value === null || Number.isNaN(value)) return "–";
   return Number(value).toFixed(digits);
 }
 
-function formatDuration(value?: number | null) {
+function formatDuration(value?: number | null): string {
   if (value === undefined || value === null || Number.isNaN(value)) return "–";
   const totalMinutes = Math.round(value * 60);
   const hours = Math.floor(totalMinutes / 60);
@@ -23,408 +37,111 @@ function formatDuration(value?: number | null) {
   return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
 }
 
-function generateTicks(minValue: number, maxValue: number, count = 4) {
-  if (count < 2) return [maxValue];
-
-  if (minValue === maxValue) {
-    const wiggle = minValue === 0 ? 1 : Math.abs(minValue) * 0.25;
-    minValue -= wiggle;
-    maxValue += wiggle;
-  }
-
-  const span = maxValue - minValue || 1;
-  const roughStep = span / (count - 1);
-  const magnitude = 10 ** Math.floor(Math.log10(Math.max(roughStep, 1)));
-  const step = Math.ceil(roughStep / magnitude) * magnitude;
-  const start = Math.floor(minValue / step) * step;
-  const end = Math.ceil(maxValue / step) * step;
-
-  const ticks: number[] = [];
-  for (let v = start; v <= end + step / 2; v += step) {
-    ticks.push(Number(v.toFixed(6)));
-  }
-
-  return ticks;
+/** Berechnet Prozent eines Werts innerhalb [lo, hi]. Klemmt auf 0–100. */
+function toPct(value: number | null | undefined, lo: number, hi: number): number {
+  if (value == null || hi <= lo) return 0;
+  return Math.min(100, Math.max(0, ((value - lo) / (hi - lo)) * 100));
 }
 
-function formatTickLabel(value: number) {
-  const abs = Math.abs(value);
-  if (abs >= 100) return value.toFixed(0);
-  if (abs >= 10) return value.toFixed(1);
-  return value.toFixed(2);
+function rangeBarProps(
+  curValue: number | null | undefined,
+  baseline: number | null | undefined,
+  lo: number | null | undefined,
+  hi: number | null | undefined,
+): { value: number; baseline: number; marker: number } {
+  const loN = lo ?? 0;
+  const hiN = hi ?? 100;
+  const fillPct = toPct(curValue, loN, hiN);
+  const basePct = toPct(baseline, loN, hiN);
+  return { value: fillPct, baseline: basePct, marker: fillPct };
 }
 
-function Barometer({ color, score }: { color?: string; score?: number }) {
-  const safeColor = color ?? "gray";
-  const clamped = Math.max(0, Math.min(score ?? 0, 100));
+function deltaTone(text?: string): "pos" | "neg" | "neutral" {
+  if (!text) return "neutral";
+  if (text.startsWith("+") || text.startsWith("▲")) return "pos";
+  if (text.startsWith("-") || text.startsWith("▼") || text.startsWith("−")) return "neg";
+  return "neutral";
+}
+
+/** Schnelle Datumskürzung für X-Achse: "2024-06-03" -> "03.06" */
+function shortDate(d: string): string {
+  const parts = d.split("-");
+  if (parts.length !== 3) return d;
+  return `${parts[2]}.${parts[1]}`;
+}
+
+// ── Range-Optionen ────────────────────────────────────────────────────────────
+
+const RANGE_OPTIONS = [
+  { value: "today", label: "Heute" },
+  { value: "7d",    label: "7 Tage" },
+  { value: "14d",   label: "14 Tage" },
+  { value: "30d",   label: "30 Tage" },
+] satisfies SegmentedControlOption[];
+
+// ── Mono-Einheiten-Badge ──────────────────────────────────────────────────────
+
+function UnitBadge({ unit }: { unit: string }) {
   return (
-    <div className={`barometer barometer--${safeColor}`} aria-label={`Score ${clamped}`}>
-      <div className="barometer__track">
-        <div className="barometer__fill" style={{ width: `${clamped}%` }} />
-      </div>
-      <span className="barometer__value">{clamped}</span>
-    </div>
+    <span
+      style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 10,
+        letterSpacing: "0.05em",
+        padding: "3px 8px",
+        borderRadius: "var(--radius-pill)",
+        border: "1px solid var(--border-strong)",
+        color: "var(--text-low)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {unit}
+    </span>
   );
 }
 
-function BaselineBar({
-  value,
-  baseline,
-  min,
-  max,
-  unit,
-}: {
-  value?: number | null;
-  baseline?: number | null;
-  min?: number | null;
-  max?: number | null;
-  unit?: string;
-}) {
-  if (min === undefined || max === undefined || min === null || max === null) return null;
-  if (max <= min) return null;
+// ── Chart-Panel-Wrapper ───────────────────────────────────────────────────────
 
-  const span = max - min;
-  const clamp = (v: number) => Math.min(Math.max(v, min), max);
-  const baselinePct = baseline === undefined || baseline === null ? null : ((clamp(baseline) - min) / span) * 100;
-  const valuePct = value === undefined || value === null ? null : ((clamp(value) - min) / span) * 100;
-
-  return (
-    <div className="baseline-bar" role="presentation">
-      <div className="baseline-bar__track">
-        <div className="baseline-bar__range" />
-        {baselinePct !== null && (
-          <div
-            className="baseline-bar__marker"
-            style={{ left: `${baselinePct}%` }}
-            title={`Baseline ${formatValue(baseline)}`}
-          />
-        )}
-        {valuePct !== null && (
-          <div
-            className="baseline-bar__value"
-            style={{ left: `${valuePct}%` }}
-            title={`Aktuell ${formatValue(value)}${unit ? ` ${unit}` : ""}`}
-          />
-        )}
-      </div>
-      <div className="baseline-bar__labels">
-        <span>Low: {formatValue(min)}</span>
-        <span>Baseline: {baselinePct !== null ? formatValue(baseline) : "–"}</span>
-        <span>High: {formatValue(max)}</span>
-      </div>
-    </div>
-  );
-}
-
-function SummaryTile({
+function ChartPanel({
   title,
-  value,
   unit,
-  delta,
-  color,
-  score,
-  detail,
-  displayValue,
-  baseline,
-  rangeMin,
-  rangeMax,
+  children,
 }: {
   title: string;
-  value?: number | null;
   unit?: string;
-  delta?: string;
-  color?: string;
-  score?: number;
-  detail?: string;
-  displayValue?: string | null;
-  baseline?: number | null;
-  rangeMin?: number | null;
-  rangeMax?: number | null;
+  children: React.ReactNode;
 }) {
-  const hasRange =
-    rangeMin !== undefined &&
-    rangeMax !== undefined &&
-    rangeMin !== null &&
-    rangeMax !== null &&
-    rangeMax > rangeMin;
-
   return (
-    <GlassCard className="energy-tile">
-      <div className="tile-header">
-        <div className="kicker">{title}</div>
-        <Barometer color={color} score={score} />
+    <Card>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 14,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--text-high)",
+          }}
+        >
+          {title}
+        </span>
+        {unit ? <UnitBadge unit={unit} /> : null}
       </div>
-      <div className="tile-body">
-        <div className="tile-value">
-          <span>{displayValue ?? formatValue(value)}</span>
-          {unit ? <span className="unit">{unit}</span> : null}
-        </div>
-        <div className="tile-delta">{delta ?? "–"}</div>
-        {detail ? <div className="tile-detail">{detail}</div> : null}
-        {hasRange ? (
-          <BaselineBar value={value} baseline={baseline} min={rangeMin ?? undefined} max={rangeMax ?? undefined} unit={unit} />
-        ) : null}
-      </div>
-    </GlassCard>
+      {children}
+    </Card>
   );
 }
 
-function buildPath(points: { x: number; y: number }[]): string {
-  if (points.length === 0) return "";
-  return points
-    .map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
-    .join(" ");
-}
-
-function LineChart({
-  data,
-  title,
-  color,
-  unit,
-}: {
-  data: MetricPoint[];
-  title: string;
-  color: string;
-  unit?: string;
-}) {
-  const sortedData = [...data].sort((a, b) => a.date.localeCompare(b.date));
-
-  const filtered = sortedData.map((d) => d.value).filter((v) => v !== null) as number[];
-  const min = filtered.length ? Math.min(...filtered) : 0;
-  const max = filtered.length ? Math.max(...filtered) : 1;
-  const padding = (max - min) * 0.1 + 1;
-  const height = 220;
-  const width = Math.max(360, sortedData.length * 36);
-  const margin = { top: 20, right: 24, bottom: 26, left: 48 };
-  const step = (width - margin.left - margin.right) / Math.max(sortedData.length - 1, 1);
-
-  const domainMin = min - padding;
-  const domainMax = max + padding;
-  const yTicks = generateTicks(domainMin, domainMax, 5);
-  const xTickCount = Math.min(5, sortedData.length || 1);
-  const xTickStep =
-    xTickCount > 1 ? Math.max(1, Math.floor((sortedData.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: sortedData.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === sortedData.length - 1
-  );
-
-  const scaleY = (value: number) => {
-    const range = domainMax - domainMin || 1;
-    const relative = (value - domainMin) / range;
-    return margin.top + (1 - relative) * (height - margin.top - margin.bottom);
-  };
-
-  const points = sortedData
-    .map((d, idx) =>
-      d.value === null
-        ? null
-        : {
-            x: margin.left + idx * step,
-            y: scaleY(d.value),
-            idx,
-          }
-    )
-    .filter((p): p is { x: number; y: number; idx: number } => Boolean(p));
-
-  const path = buildPath(points.map(({ x, y }) => ({ x, y })));
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Trend</span>
-          <h4 className="chart-title">{title}</h4>
-        </div>
-        {unit ? <span className="pill">{unit}</span> : null}
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${title} Chart`}>
-          <defs>
-            <linearGradient id={`grad-${title}`} x1="0%" x2="0%" y1="0%" y2="100%">
-              <stop offset="0%" stopColor={color} stopOpacity="0.6" />
-              <stop offset="100%" stopColor={color} stopOpacity="0.1" />
-            </linearGradient>
-          </defs>
-          <rect
-            x={margin.left}
-            y={margin.top}
-            width={width - margin.left - margin.right}
-            height={height - margin.top - margin.bottom}
-            fill="rgba(255,255,255,0.02)"
-          />
-          {yTicks.map((tick) => {
-            const y = scaleY(tick);
-            return (
-              <g key={tick}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <path d={path} fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
-          {points.map((p) => (
-            <g key={sortedData[p.idx].date}>
-              <circle cx={p.x} cy={p.y} r={3} fill={color} />
-              <title>
-                {sortedData[p.idx].date}: {formatValue(sortedData[p.idx].value)}
-                {unit ? ` ${unit}` : ""}
-              </title>
-            </g>
-          ))}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * step;
-            return (
-              <g key={sortedData[idx].date + idx}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {sortedData[idx].date}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
-
-function ActivityChart({ data }: { data: ActivityPoint[] }) {
-  const steps = data.map((d) => d.steps ?? 0);
-  const exercise = data.map((d) => d.exercise_min ?? 0);
-  const maxSteps = Math.max(...steps, 1);
-  const maxExercise = Math.max(...exercise, 1);
-  const height = 240;
-  const width = Math.max(360, data.length * 36);
-  const margin = { top: 20, right: 56, bottom: 26, left: 52 };
-  const stepWidth = (width - margin.left - margin.right) / Math.max(data.length, 1);
-  const innerHeight = height - margin.top - margin.bottom - 40;
-
-  const yTicks = generateTicks(0, maxSteps, 5);
-  const exerciseTicks = generateTicks(0, maxExercise, 5);
-  const xTickCount = Math.min(5, data.length || 1);
-  const xTickStep = xTickCount > 1 ? Math.max(1, Math.floor((data.length - 1) / (xTickCount - 1))) : 1;
-  const xTickIndices = Array.from({ length: data.length }, (_, idx) => idx).filter(
-    (idx) => idx % xTickStep === 0 || idx === data.length - 1
-  );
-
-  const valueToY = (value: number) => height - margin.bottom - (value / maxSteps) * innerHeight;
-  const exerciseToY = (value: number) => height - margin.bottom - (value / maxExercise) * innerHeight;
-
-  return (
-    <GlassCard className="chart-panel">
-      <div className="chart-panel__header">
-        <div>
-          <span className="kicker">Load</span>
-          <h4 className="chart-title">Aktivität &amp; Bewegung</h4>
-        </div>
-        <div className="chart-controls" aria-hidden>
-          <span className="pill">Steps</span>
-          <span className="pill">Exercise</span>
-        </div>
-      </div>
-      <div className="chart-shell chart-shell--centered" style={{ minHeight: height }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Steps and exercise chart">
-          {yTicks.map((tick) => {
-            const y = valueToY(tick);
-            return (
-              <g key={`y-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" />
-                <text x={margin.left - 10} y={y + 4} className="chart-tick-label" textAnchor="end">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          {exerciseTicks.map((tick) => {
-            const y = exerciseToY(tick);
-            return (
-              <g key={`ex-${tick}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid" opacity={0.15} />
-                <text x={width - margin.right + 6} y={y + 4} className="chart-tick-label" textAnchor="start">
-                  {formatTickLabel(tick)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            x1={margin.left}
-            x2={width - margin.right}
-            y1={height - margin.bottom}
-            y2={height - margin.bottom}
-            className="chart-axis"
-          />
-          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} className="chart-axis" />
-          {data.map((d, idx) => {
-            const barHeight = ((d.steps ?? 0) / maxSteps) * (height - margin.top - margin.bottom - 40);
-            const exHeight = height - margin.bottom - exerciseToY(d.exercise_min ?? 0);
-            const x = margin.left + idx * stepWidth + stepWidth * 0.2;
-            const barWidth = stepWidth * 0.45;
-            return (
-              <g key={d.date}>
-                <rect
-                  x={x}
-                  y={height - margin.bottom - barHeight}
-                  width={barWidth}
-                  height={barHeight}
-                  fill="var(--electric-blue)"
-                  opacity={0.5}
-                  rx={4}
-                >
-                  <title>
-                    {d.date}: {formatValue(d.steps, 0)} Steps
-                  </title>
-                </rect>
-                <rect
-                  x={x + barWidth + 4}
-                  y={height - margin.bottom - exHeight}
-                  width={barWidth * 0.6}
-                  height={exHeight}
-                  fill="#22d3ee"
-                  opacity={0.8}
-                  rx={3}
-                >
-                  <title>
-                    {d.date}: {formatValue(d.exercise_min, 0)} min Exercise
-                  </title>
-                </rect>
-              </g>
-            );
-          })}
-          {xTickIndices.map((idx) => {
-            const x = margin.left + idx * stepWidth + stepWidth / 2;
-            return (
-              <g key={`x-${data[idx].date}-${idx}`}>
-                <line x1={x} x2={x} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="chart-axis" />
-                <text x={x} y={height - 6} className="chart-tick-label" textAnchor="middle">
-                  {data[idx].date}
-                </text>
-              </g>
-            );
-          })}
-          <text x={margin.left} y={margin.top + 10} className="chart-tick-label" textAnchor="start">
-            Steps (links)
-          </text>
-          <text x={width - margin.right} y={margin.top + 10} className="chart-tick-label" textAnchor="end">
-            Exercise (rechts)
-          </text>
-        </svg>
-      </div>
-    </GlassCard>
-  );
-}
+// ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 export function EnergyMonitorView() {
-  const [range, setRange] = useState<RangeKey>("14d");
+  const [range, setRange] = useState<RangeKey>("7d");
   const [data, setData] = useState<EnergyMonitorResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -437,153 +154,402 @@ export function EnergyMonitorView() {
       .then((res) => {
         if (mounted) setData(res);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error(err);
-        if (mounted) setError(err.message);
+        if (mounted) setError(err instanceof Error ? err.message : String(err));
       })
-      .finally(() => mounted && setLoading(false));
-
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
     return () => {
       mounted = false;
     };
   }, [range]);
 
-  const readiness = data?.tiles.readiness.score ?? 0;
+  // ── RHR-Wert (wie vorher: avg > letzter Punkt > tile.value) ─────────────
+  const rhrSeries: MetricPoint[] = (data?.series.rhr ?? []).map((p) => ({
+    date: p.date,
+    value: p.avg ?? p.value ?? null,
+  }));
+  const sortedRhr = [...rhrSeries].sort((a, b) => a.date.localeCompare(b.date));
+  const prevRhr =
+    sortedRhr.length > 1 ? (sortedRhr[sortedRhr.length - 2]?.value ?? null) : null;
+  const rhrValue = data?.tiles.rhr.avg ?? data?.tiles.rhr.value ?? prevRhr;
+
   const signals = data?.signals ?? [];
-  const restingHeartRateSeries: MetricPoint[] =
-    data?.series.rhr.map((point) => ({
-      date: point.date,
-      value: point.avg ?? point.value ?? null,
-    })) ?? [];
-  const sortedRestingHeartRateSeries = [...restingHeartRateSeries].sort((a, b) => a.date.localeCompare(b.date));
-  const previousRestingHeartRate =
-    sortedRestingHeartRateSeries.length > 1
-      ? sortedRestingHeartRateSeries[sortedRestingHeartRateSeries.length - 2]?.value ?? null
-      : null;
-  const restingHeartRateValue = data?.tiles.rhr.avg ?? data?.tiles.rhr.value ?? previousRestingHeartRate;
+
+  // ── Chart-Daten ──────────────────────────────────────────────────────────
+  const hrvChartData = (data?.series.hrv ?? [])
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((p) => ({ date: shortDate(p.date), value: p.value }));
+
+  const rhrChartData = rhrSeries
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((p) => ({ date: shortDate(p.date), value: p.value }));
+
+  const sleepChartData = (data?.series.sleep_total ?? [])
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((p) => ({ date: shortDate(p.date), value: p.value }));
+
+  const activityChartData: Array<Record<string, unknown>> = (data?.series.activity ?? [])
+    .slice()
+    .sort((a: ActivityPoint, b: ActivityPoint) => a.date.localeCompare(b.date))
+    .map((p: ActivityPoint) => ({
+      date: shortDate(p.date),
+      steps: p.steps ?? 0,
+      exercise: p.exercise_min ?? 0,
+    }));
 
   return (
     <div className="app-grid">
-      <header className="app-header">
-        <span className="kicker">Health</span>
-        <h1 className="title">Energy Monitor</h1>
-        <p className="subtitle">Aggregierte Daily Metrics mit Readiness-Barometer.</p>
-        <div className="chart-controls" role="group" aria-label="Zeitraum wählen">
-          {ranges.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`pill ${range === item.key ? "pill--active" : ""}`.trim()}
-              onClick={() => setRange(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </header>
+      {/* ── PageHeader ─────────────────────────────────────────────────────── */}
+      <PageHeader
+        eyebrow="HEALTH"
+        title="Energy Monitor"
+        subtitle="Aggregierte Tages-Metriken mit Readiness-Barometer."
+        right={
+          <SegmentedControl
+            options={RANGE_OPTIONS}
+            value={range}
+            onChange={(v) => setRange(v as RangeKey)}
+          />
+        }
+      />
 
-      <section className="stack">
-        <div className="section-heading">Summary</div>
-        {loading && (
-          <GlassCard glow className="loader">
-            <span className="kicker">Loading</span>
-            <h3 className="card-title">Energy Monitor wird geladen...</h3>
-            <p className="card-description">Robuste Tages-Metriken und Readiness-Score werden vorbereitet.</p>
-          </GlassCard>
-        )}
-        {error && (
-          <GlassCard className="error-card">
-            <h3 className="card-title">Fehler</h3>
-            <p className="card-description">{error}</p>
-          </GlassCard>
-        )}
-        {data && !loading && (
-          <div className="grid-cards summary-grid">
-            <SummaryTile
-              title="Readiness"
-              value={data.tiles.readiness.score}
-              unit="/100"
-              delta={data.tiles.readiness.delta_text}
-              color={data.tiles.readiness.color}
-              score={data.tiles.readiness.score}
-              detail="Gewichtet: Schlaf 30%, HRV 45%, RHR 25%"
-            />
-            <SummaryTile
-              title="Schlaf"
-              value={data.tiles.sleep.value}
-              displayValue={data.tiles.sleep.display_value ?? formatDuration(data.tiles.sleep.value)}
-              unit={data.tiles.sleep.display_value ? undefined : data.tiles.sleep.unit}
-              delta={data.tiles.sleep.delta_text}
-              color={data.tiles.sleep.color}
-              score={data.tiles.sleep.score}
-              detail="66% diese Nacht, 33% letzte 3 Nächte"
-            />
-            <SummaryTile
-              title="HRV"
-              value={data.tiles.hrv.value}
-              unit={data.tiles.hrv.unit}
-              delta={data.tiles.hrv.delta_text}
-              color={data.tiles.hrv.color}
-              score={data.tiles.hrv.score}
-              baseline={data.tiles.hrv.baseline}
-              rangeMin={data.tiles.hrv.range_min}
-              rangeMax={data.tiles.hrv.range_max}
-            />
-            <SummaryTile
-              title="Ruhepuls"
-              value={restingHeartRateValue}
-              unit={data.tiles.rhr.unit}
-              delta={data.tiles.rhr.delta_text}
-              color={data.tiles.rhr.color}
-              score={data.tiles.rhr.score}
-              baseline={data.tiles.rhr.baseline}
-              rangeMin={data.tiles.rhr.range_min}
-              rangeMax={data.tiles.rhr.range_max}
-            />
-            <SummaryTile
-              title="Load & Movement"
-              value={data.tiles.load.steps ?? data.tiles.load.exercise_min}
-              unit={data.tiles.load.steps ? "Steps" : "Min"}
-              delta={data.tiles.load.delta_text}
-              color={data.tiles.load.color}
-              score={data.tiles.load.score}
-              detail={`Steps: ${formatValue(data.tiles.load.steps, 0)} · Exercise: ${formatValue(
-                data.tiles.load.exercise_min,
-                0
-              )}min`}
-            />
-          </div>
-        )}
-      </section>
-
-      {data && !loading && (
-        <section className="stack">
-          <div className="section-heading">Trends</div>
-          <div className="grid-cards charts-grid">
-            <LineChart data={data.series.hrv} title="HRV" color="#67e8f9" unit="ms" />
-            <LineChart data={restingHeartRateSeries} title="Ruhepuls" color="#a855f7" unit="bpm" />
-            <LineChart data={data.series.sleep_total} title="Schlafdauer" color="#38bdf8" unit="min" />
-            <ActivityChart data={data.series.activity} />
-          </div>
-        </section>
+      {/* ── Loading / Error ─────────────────────────────────────────────────── */}
+      {loading && (
+        <Card>
+          <span
+            style={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10,
+              letterSpacing: "0.15em",
+              color: "var(--text-low)",
+              textTransform: "uppercase",
+            }}
+          >
+            Loading
+          </span>
+          <p style={{ marginTop: 8, color: "var(--text-mid)", fontSize: 14 }}>
+            Energy Monitor wird geladen…
+          </p>
+        </Card>
+      )}
+      {error && (
+        <Card style={{ borderTop: "2px solid var(--coral)" }}>
+          <p style={{ color: "var(--coral)", fontWeight: 600 }}>Fehler</p>
+          <p style={{ marginTop: 6, color: "var(--text-mid)", fontSize: 13 }}>{error}</p>
+        </Card>
       )}
 
-      {data && (
-        <section className="stack">
-          <div className="section-heading">Signals</div>
-          <GlassCard>
-            <h4 className="card-title">Automatische Hinweise</h4>
+      {/* ── Summary-Karten ──────────────────────────────────────────────────── */}
+      {data && !loading && (
+        <>
+          <SectionHeader label="Summary" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {/* Readiness ── Amber */}
+            <StatCard
+              eyebrow="Readiness"
+              value={formatValue(data.tiles.readiness.score, 0)}
+              unit="/100"
+              accent={ACCENT.amber}
+              delta={
+                data.tiles.readiness.delta_text
+                  ? {
+                      text: data.tiles.readiness.delta_text,
+                      tone: deltaTone(data.tiles.readiness.delta_text),
+                    }
+                  : undefined
+              }
+            >
+              <ProgressBar value={data.tiles.readiness.score ?? 0} color={ACCENT.amber} />
+              <p
+                style={{
+                  marginTop: 8,
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 10,
+                  color: "var(--text-low)",
+                }}
+              >
+                Gewichtet: Schlaf 30 · HRV 45 · RHR 25
+              </p>
+            </StatCard>
+
+            {/* Schlaf ── Violet */}
+            <StatCard
+              eyebrow="Schlaf"
+              value={data.tiles.sleep.display_value ?? formatDuration(data.tiles.sleep.value)}
+              accent={ACCENT.violet}
+              delta={
+                data.tiles.sleep.delta_text
+                  ? {
+                      text: data.tiles.sleep.delta_text,
+                      tone: deltaTone(data.tiles.sleep.delta_text),
+                    }
+                  : undefined
+              }
+            >
+              <ProgressBar value={data.tiles.sleep.score ?? 0} color={ACCENT.violet} />
+              {data.tiles.sleep.avg != null && (
+                <p
+                  style={{
+                    marginTop: 8,
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: 10,
+                    color: "var(--text-low)",
+                  }}
+                >
+                  Ø {formatDuration(data.tiles.sleep.avg)}
+                </p>
+              )}
+            </StatCard>
+
+            {/* HRV ── Teal */}
+            {(() => {
+              const lo = data.tiles.hrv.range_min;
+              const hi = data.tiles.hrv.range_max;
+              const hasRange =
+                lo != null && hi != null && hi > lo;
+              const rbp = hasRange
+                ? rangeBarProps(data.tiles.hrv.value, data.tiles.hrv.baseline, lo, hi)
+                : null;
+              return (
+                <StatCard
+                  eyebrow="HRV"
+                  value={formatValue(data.tiles.hrv.value, 0)}
+                  unit={data.tiles.hrv.unit ?? "ms"}
+                  accent={ACCENT.teal}
+                  delta={
+                    data.tiles.hrv.delta_text
+                      ? {
+                          text: data.tiles.hrv.delta_text,
+                          tone: deltaTone(data.tiles.hrv.delta_text),
+                        }
+                      : undefined
+                  }
+                >
+                  {rbp ? (
+                    <RangeBar
+                      value={rbp.value}
+                      baseline={rbp.baseline}
+                      marker={rbp.marker}
+                      color={CHART_COLORS.teal}
+                    />
+                  ) : (
+                    <ProgressBar value={data.tiles.hrv.score ?? 0} color={ACCENT.teal} />
+                  )}
+                  <p
+                    style={{
+                      marginTop: 8,
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 10,
+                      color: "var(--text-low)",
+                    }}
+                  >
+                    Lo {formatValue(lo, 0)} · Bsl {formatValue(data.tiles.hrv.baseline, 0)} · Hi {formatValue(hi, 0)}
+                  </p>
+                </StatCard>
+              );
+            })()}
+
+            {/* Ruhepuls ── Coral */}
+            {(() => {
+              const lo = data.tiles.rhr.range_min;
+              const hi = data.tiles.rhr.range_max;
+              const hasRange = lo != null && hi != null && hi > lo;
+              const rbp = hasRange
+                ? rangeBarProps(rhrValue, data.tiles.rhr.baseline, lo, hi)
+                : null;
+              return (
+                <StatCard
+                  eyebrow="Ruhepuls"
+                  value={formatValue(rhrValue, 0)}
+                  unit={data.tiles.rhr.unit ?? "bpm"}
+                  accent={ACCENT.coral}
+                  delta={
+                    data.tiles.rhr.delta_text
+                      ? {
+                          text: data.tiles.rhr.delta_text,
+                          tone: deltaTone(data.tiles.rhr.delta_text),
+                        }
+                      : undefined
+                  }
+                >
+                  {rbp ? (
+                    <RangeBar
+                      value={rbp.value}
+                      baseline={rbp.baseline}
+                      marker={rbp.marker}
+                      color={CHART_COLORS.coral}
+                    />
+                  ) : (
+                    <ProgressBar value={data.tiles.rhr.score ?? 0} color={ACCENT.coral} />
+                  )}
+                  <p
+                    style={{
+                      marginTop: 8,
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 10,
+                      color: "var(--text-low)",
+                    }}
+                  >
+                    Lo {formatValue(lo, 0)} · Bsl {formatValue(data.tiles.rhr.baseline, 0)} · Hi {formatValue(hi, 0)}
+                  </p>
+                </StatCard>
+              );
+            })()}
+
+            {/* Load & Movement ── Indigo */}
+            <StatCard
+              eyebrow="Load & Movement"
+              value={formatValue(data.tiles.load.steps, 0)}
+              unit="Steps"
+              accent={ACCENT.indigo}
+              delta={
+                data.tiles.load.delta_text
+                  ? {
+                      text: data.tiles.load.delta_text,
+                      tone: deltaTone(data.tiles.load.delta_text),
+                    }
+                  : undefined
+              }
+            >
+              <ProgressBar value={data.tiles.load.score ?? 0} color={ACCENT.indigo} />
+              <p
+                style={{
+                  marginTop: 8,
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 10,
+                  color: "var(--text-low)",
+                }}
+              >
+                {formatValue(data.tiles.load.exercise_min, 0)} min Exercise · Ziel 10 000
+              </p>
+            </StatCard>
+          </div>
+
+          {/* ── Trends 2×2 ─────────────────────────────────────────────────── */}
+          <SectionHeader label="Trends" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, 1fr)",
+              gap: 16,
+            }}
+          >
+            {/* HRV */}
+            <ChartPanel title="HRV" unit="ms">
+              <LineAreaChart
+                data={hrvChartData}
+                dataKey="value"
+                xKey="date"
+                color={CHART_COLORS.teal}
+                height={200}
+                xTickFormatter={shortDate}
+              />
+            </ChartPanel>
+
+            {/* Ruhepuls */}
+            <ChartPanel title="Ruhepuls" unit="bpm">
+              <LineAreaChart
+                data={rhrChartData}
+                dataKey="value"
+                xKey="date"
+                color={CHART_COLORS.coral}
+                height={200}
+                xTickFormatter={shortDate}
+              />
+            </ChartPanel>
+
+            {/* Schlafdauer */}
+            <ChartPanel title="Schlafdauer" unit="min">
+              <LineAreaChart
+                data={sleepChartData}
+                dataKey="value"
+                xKey="date"
+                color={CHART_COLORS.violet}
+                height={200}
+                yMin={3}
+                xTickFormatter={shortDate}
+              />
+            </ChartPanel>
+
+            {/* Aktivität & Bewegung */}
+            <ChartPanel title="Aktivität & Bewegung">
+              <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
+                <UnitBadge unit="Steps" />
+                <UnitBadge unit="Exercise min" />
+              </div>
+              <ComboChart
+                data={activityChartData}
+                xKey="date"
+                bars={[
+                  { dataKey: "steps", name: "Steps", color: CHART_COLORS.indigo },
+                ]}
+                line={{ dataKey: "exercise", name: "Exercise min", color: CHART_COLORS.teal }}
+                height={200}
+                xTickFormatter={shortDate}
+              />
+            </ChartPanel>
+          </div>
+
+          {/* ── Signals / Risiko-Hinweise ───────────────────────────────────── */}
+          <SectionHeader label="Signals" />
+          <Card>
+            <p
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text-high)",
+                marginBottom: signals.length > 0 ? 12 : 0,
+              }}
+            >
+              Automatische Hinweise
+            </p>
             {signals.length === 0 ? (
-              <p className="card-description">Alle Kernsignale liegen im Rahmen der Baseline.</p>
+              <p style={{ color: "var(--text-mid)", fontSize: 13, marginTop: 6 }}>
+                Alle Kernsignale liegen im Rahmen der Baseline.
+              </p>
             ) : (
-              <ul className="signal-list">
+              <ul
+                style={{
+                  listStyle: "none",
+                  margin: 0,
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
                 {signals.map((s) => (
-                  <li key={s}>{s}</li>
+                  <li
+                    key={s}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: "var(--radius-card)",
+                      background: "var(--warning-fill)",
+                      color: "var(--warning-text)",
+                      fontSize: 13,
+                      borderLeft: "3px solid var(--amber)",
+                    }}
+                  >
+                    {s}
+                  </li>
                 ))}
               </ul>
             )}
-          </GlassCard>
-        </section>
+          </Card>
+        </>
       )}
     </div>
   );

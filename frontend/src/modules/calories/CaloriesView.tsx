@@ -1,21 +1,51 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { GlassCard } from "../../core/GlassCard";
+import {
+  PageHeader,
+  SegmentedControl,
+  StatCard,
+  SectionHeader,
+  ProgressBar,
+  Badge,
+  Button,
+  Card,
+} from "../../core/ui";
+import type { SegmentedControlOption } from "../../core/ui";
+import {
+  StackedBarLineChart,
+  LineAreaChart,
+  BarChart,
+  CHART_COLORS,
+} from "../../core/charts";
 
+// ── Mahlzeit-Typen ─────────────────────────────────────────────────────────────
 const TYPE_LABELS: Record<string, string> = {
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  dinner: "Dinner",
+  breakfast: "Frühstück",
+  lunch: "Mittag",
+  dinner: "Abendessen",
   softdrink: "Drinks",
   snack: "Snack",
 };
 
+// Daten-Spektrum-Farben (Hex aus den Tokens, fuer Charts/Swatches).
 const TYPE_COLORS: Record<string, string> = {
-  breakfast: "#60a5fa",
-  lunch: "#34d399",
-  dinner: "#f59e0b",
-  softdrink: "#a855f7",
-  snack: "#f472b6",
+  breakfast: CHART_COLORS.teal,
+  lunch: CHART_COLORS.green,
+  dinner: CHART_COLORS.amber,
+  softdrink: CHART_COLORS.indigo,
+  snack: CHART_COLORS.coral,
 };
+
+// Schnell-Pills setzen den Mahlzeit-Typ vor (Praefix im Freitext).
+const QUICK_PILLS: Array<{ type: keyof typeof TYPE_LABELS; label: string }> = [
+  { type: "breakfast", label: "+ Frühstück" },
+  { type: "lunch", label: "+ Mittag" },
+  { type: "snack", label: "+ Snack" },
+  { type: "dinner", label: "+ Abendessen" },
+];
+
+// Tagesziel (Default). Das Calories-Backend liefert kein Ziel, daher konstanter
+// Referenzwert wie im Mockup ("Ziel 2.200").
+const DAILY_GOAL = 2200;
 
 type MealEntry = {
   id: number;
@@ -75,12 +105,31 @@ type ImportBatch = {
 
 type KeyStatus = { has_key: boolean; is_valid: boolean; last_checked_at?: string | null };
 
-const RANGE_OPTIONS = ["today", "7d", "14d", "30d"] as const;
+const RANGE_OPTIONS = [
+  { value: "today", label: "Heute" },
+  { value: "7d", label: "7 Tage" },
+  { value: "14d", label: "14 Tage" },
+  { value: "30d", label: "30 Tage" },
+] satisfies SegmentedControlOption[];
 
 const todayString = () => new Date().toISOString().slice(0, 10);
 
 const formatNumber = (value?: number | null, unit = "") =>
   value === undefined || value === null ? "–" : `${Math.round(value)}${unit}`;
+
+/** Tausender-Trennung mit Punkt (z. B. 1840 -> "1.840"). */
+const formatKcal = (value?: number | null): string => {
+  if (value === undefined || value === null || Number.isNaN(value)) return "–";
+  return Math.round(value)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+};
+
+/** Vorzeichenbehaftete Tausender-Trennung (z. B. -540 -> "−540"). */
+const formatSignedKcal = (value: number): string => {
+  const sign = value < 0 ? "−" : value > 0 ? "+" : "";
+  return `${sign}${formatKcal(Math.abs(value))}`;
+};
 
 const formatTime = (ts?: string | null) => {
   if (!ts) return "";
@@ -95,86 +144,110 @@ const formatDate = (dateValue: string) => {
   return parsed.toLocaleDateString();
 };
 
-function PercentBar({
-  day,
-  maxKcal,
-  onSelect,
-  selected,
-}: {
-  day: SummaryDay;
-  maxKcal: number;
-  onSelect: (date: string) => void;
-  selected: boolean;
-}) {
-  const total = day.total_kcal || 0;
-  const height = maxKcal > 0 ? Math.max(12, (total / maxKcal) * 180) : 12;
+/** X-Achsen-Label: "2026-06-23" -> "23.6". */
+const shortDate = (d: string): string => {
+  const parts = d.split("-");
+  if (parts.length !== 3) return d;
+  return `${Number(parts[2])}.${Number(parts[1])}`;
+};
 
+// ── Kleine Bausteine (Aqua-Operator-Look) ──────────────────────────────────────
+
+function Caption({ children }: { children: React.ReactNode }) {
+  return <p style={{ marginTop: 9, fontSize: 11, color: "var(--text-mid)" }}>{children}</p>;
+}
+
+function LegendItem({ color, label, line }: { color: string; label: string; line?: boolean }) {
   return (
-    <button
-      type="button"
-      className={`stacked-bar ${selected ? "is-active" : ""}`}
-      onClick={() => onSelect(day.date)}
-      aria-label={`Details für ${day.date}`}
-    >
-      <div className="stacked-bar__stack" style={{ height }}>
-        {Object.entries(TYPE_COLORS).map(([key, color]) => {
-          const value = day.types[key] ?? 0;
-          const pct = total > 0 ? (value / total) * 100 : 0;
-          return (
-            <span
-              key={key}
-              className="stacked-bar__segment"
-              style={{ height: `${pct}%`, background: color }}
-              title={`${TYPE_LABELS[key] ?? key}: ${Math.round(value)} kcal`}
-            />
-          );
-        })}
-      </div>
-      <span className="stacked-bar__label">{day.date.slice(5)}</span>
-      <span className="stacked-bar__value">{Math.round(total)} kcal</span>
-    </button>
+    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
+      <span
+        style={{
+          width: line ? 11 : 9,
+          height: line ? 2 : 9,
+          borderRadius: 2,
+          background: color,
+          flex: "none",
+        }}
+      />
+      {label}
+    </span>
   );
 }
 
-function VapeBar({
-  day,
-  maxDelta,
-  average,
-}: {
-  day: VapeDay;
-  maxDelta: number;
-  average: number;
-}) {
-  const height = maxDelta > 0 ? Math.max(10, (day.delta / maxDelta) * 140) : 10;
-  const isCoil = Boolean(day.coil_change);
-  const avgBottom = average > 0 ? (average / (maxDelta || average)) * 140 : 0;
+function DashedLegendItem({ color, label }: { color: string; label: string }) {
   return (
-    <div className="vape-bar" title={`${day.date}: +${day.delta}`}>
+    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
+      <span style={{ width: 13, borderTop: `2px dashed ${color}`, flex: "none" }} />
+      {label}
+    </span>
+  );
+}
+
+function ChartPanel({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card style={{ padding: "17px 17px 9px" }}>
       <div
-        className={`vape-bar__fill ${isCoil ? "is-coil" : ""}`}
-        style={{ height }}
-        aria-label={`Vape Delta ${day.delta}`}
-      />
-      {average > 0 && (
-        <div
-          className="vape-bar__avg"
-          style={{ bottom: `${avgBottom}px` }}
-          aria-hidden
-        />
-      )}
-      <span className="vape-bar__label">{day.date.slice(5)}</span>
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 8,
+        }}
+      >
+        <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-high)" }}>{title}</span>
+        {right ? <div style={{ display: "flex", alignItems: "center", gap: 13 }}>{right}</div> : null}
+      </div>
+      {children}
+    </Card>
+  );
+}
+
+function EmptyChart() {
+  return (
+    <p style={{ color: "var(--text-mid)", fontSize: 13, padding: "24px 0" }}>
+      Keine gespeicherten Einträge im Zeitraum.
+    </p>
+  );
+}
+
+/** Mono-Label mit Teal-Punkt (z. B. "QUICK CAPTURE · KI-EXTRAKTION"). */
+function MonoDotLabel({ children, color = "var(--teal)" }: { children: React.ReactNode; color?: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 9.5,
+        letterSpacing: "0.1em",
+        color,
+        textTransform: "uppercase",
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, flex: "none" }} />
+      {children}
     </div>
   );
 }
 
+// ── Hauptkomponente ───────────────────────────────────────────────────────────
+
 export function CaloriesView() {
   const [text, setText] = useState("");
-  const [dateValue, setDateValue] = useState(todayString());
-  const [useTimestamp, setUseTimestamp] = useState(false);
   const [drafts, setDrafts] = useState<MealEntry[]>([]);
   const [dayEntries, setDayEntries] = useState<MealEntry[]>([]);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
-  const [range, setRange] = useState<(typeof RANGE_OPTIONS)[number]>("7d");
+  const [range, setRange] = useState<(typeof RANGE_OPTIONS)[number]["value"]>("today");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -185,15 +258,6 @@ export function CaloriesView() {
   const [importError, setImportError] = useState<string | null>(null);
 
   const disableInput = status ? !status.is_valid : false;
-
-  const maxKcal = useMemo(
-    () => (summary ? Math.max(...summary.days.map((d) => d.total_kcal || 0), 0) : 0),
-    [summary]
-  );
-  const maxVapeDelta = useMemo(
-    () => (vapeSeries ? Math.max(...vapeSeries.days.map((d) => d.delta || 0), 0) : 0),
-    [vapeSeries]
-  );
 
   const loadStatus = async () => {
     try {
@@ -264,19 +328,20 @@ export function CaloriesView() {
     loadSummary();
     loadVape();
     loadImports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     loadSummary(range);
     loadVape(range);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const payload: Record<string, unknown> = { text, date: dateValue };
-      if (useTimestamp) payload.timestamp = new Date().toISOString();
+      const payload: Record<string, unknown> = { text, date: todayString() };
       const res = await fetch("/api/calories/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -296,6 +361,12 @@ export function CaloriesView() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  /** Schnell-Pill: Mahlzeit-Typ als Praefix in den Freitext setzen. */
+  const applyQuickPill = (label: string) => {
+    const prefix = `${label.replace(/^\+\s*/, "")}: `;
+    setText((prev) => (prev.startsWith(prefix) ? prev : prefix + prev.replace(/^[^:]+:\s*/, "")));
   };
 
   const acceptDraft = async (id: number) => {
@@ -322,8 +393,8 @@ export function CaloriesView() {
   const handleImportFile = async (file: File) => {
     setImportError(null);
     try {
-      const text = await file.text();
-      const json = JSON.parse(text);
+      const fileText = await file.text();
+      const json = JSON.parse(fileText);
       const res = await fetch("/api/calories/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -357,355 +428,683 @@ export function CaloriesView() {
     }
   };
 
+  // ── Abgeleitete Werte ─────────────────────────────────────────────────────────
+
+  const days = summary?.days ?? [];
+
+  /** Letzter Tag der Serie (oder der heutige, falls vorhanden). */
+  const todayDay = useMemo<SummaryDay | null>(() => {
+    if (!days.length) return null;
+    const today = todayString();
+    return days.find((d) => d.date === today) ?? days[days.length - 1];
+  }, [days]);
+
+  const intakeToday = todayDay?.total_kcal ?? 0;
+  const intakePct = DAILY_GOAL > 0 ? (intakeToday / DAILY_GOAL) * 100 : 0;
+  const balanceToday = intakeToday - DAILY_GOAL; // negativ = Defizit gegen Ziel
+
+  /** Ø Aufnahme pro Tag im Zeitraum (totals.kcal / Anzahl Tage). */
+  const avgIntake = useMemo(() => {
+    if (!summary || !days.length) return null;
+    return summary.totals.kcal / days.length;
+  }, [summary, days]);
+
+  // Makros heute (gestapelter Balken Protein/Carbs/Fett + Werte).
+  const macrosToday = todayDay?.macros ?? { protein_g: 0, carbs_g: 0, fat_g: 0, caffeine_mg: 0 };
+  const macroSum = macrosToday.protein_g + macrosToday.carbs_g + macrosToday.fat_g;
+  const macroPct = (g: number) => (macroSum > 0 ? (g / macroSum) * 100 : 0);
+
+  // Stacked-Chart: Mahlzeit-Typen je Tag (gestapelt) + Intake-Linie (teal).
+  // Das Calories-Backend liefert keine Ruhe/Aktiv-Burn-Werte, daher stapeln wir
+  // die realen Mahlzeit-Typen statt Ruhe/Aktiv. Intake bleibt die Teal-Linie.
+  const presentTypes = useMemo(() => {
+    const keys = Object.keys(TYPE_LABELS).filter((t) =>
+      days.some((d) => (d.types?.[t] ?? 0) > 0),
+    );
+    return keys.length ? keys : Object.keys(TYPE_LABELS);
+  }, [days]);
+
+  const stackData = useMemo(
+    () =>
+      days.map((d) => {
+        const row: Record<string, unknown> = { x: shortDate(d.date), intake: d.total_kcal };
+        for (const t of presentTypes) row[t] = d.types?.[t] ?? 0;
+        return row;
+      }),
+    [days, presentTypes],
+  );
+
+  // Goal-Chart: Intake-Flaeche/-Linie (amber) + Ziel als Referenz.
+  const goalData = useMemo(
+    () => days.map((d) => ({ x: shortDate(d.date), intake: d.total_kcal, goal: DAILY_GOAL })),
+    [days],
+  );
+
+  // Letzte Mahlzeiten (aus dem heutigen/letzten Tag via day-Endpunkt).
+  const [recentMeals, setRecentMeals] = useState<MealEntry[]>([]);
+  useEffect(() => {
+    const day = todayDay?.date;
+    if (!day) {
+      setRecentMeals([]);
+      return;
+    }
+    let mounted = true;
+    fetch(`/api/calories/day/${day}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (mounted && data.ok) setRecentMeals(data.entries ?? []);
+      })
+      .catch((err) => console.error("Recent meals failed", err));
+    return () => {
+      mounted = false;
+    };
+  }, [todayDay?.date]);
+
+  // Vape-Chart-Daten (Delta-Balken).
+  const vapeChartData = useMemo(
+    () => (vapeSeries?.days ?? []).map((d) => ({ x: shortDate(d.date), delta: d.delta })),
+    [vapeSeries],
+  );
   const dailyDeltaToday = useMemo(() => {
     const today = todayString();
     return vapeSeries?.days.find((d) => d.date === today)?.delta ?? null;
   }, [vapeSeries]);
 
+  // Burn ist in diesem Modul nicht verfuegbar -> Bilanz gegen Tagesziel.
+  const balanceTone: "pos" | "neg" | "neutral" =
+    balanceToday < 0 ? "pos" : balanceToday > 0 ? "neg" : "neutral";
+  const balanceLabel = balanceToday < 0 ? "Defizit" : balanceToday > 0 ? "Überschuss" : "Im Ziel";
+
   return (
-    <div className="stack">
-      <GlassCard className="capture-card" glow>
-        <div className="capture-grid">
-          <div className="stack">
-            <label className="settings-label">Food/Drink Text</label>
-            <textarea
-              className="input input--textarea"
-              rows={4}
-              placeholder="z.B. 2 Scheiben Brot mit Erdnussbutter und 1 Cappuccino"
+    <div className="app-grid">
+      {/* ── PageHeader ─────────────────────────────────────────────────────────── */}
+      <PageHeader
+        eyebrow="NUTRITION"
+        title="Kalorien"
+        subtitle="Intake per Sprache erfassen, Bilanz und Makros im Blick."
+        right={
+          <SegmentedControl
+            options={RANGE_OPTIONS}
+            value={range}
+            onChange={(v) => setRange(v as (typeof RANGE_OPTIONS)[number]["value"])}
+          />
+        }
+      />
+
+      {/* ── Quick Capture ──────────────────────────────────────────────────────── */}
+      <div
+        style={{
+          padding: "16px 18px",
+          borderRadius: "var(--radius-card)",
+          background: "linear-gradient(120deg, var(--panel), var(--nav-active))",
+          border: "1px solid var(--border-strong)",
+        }}
+      >
+        <div style={{ marginBottom: 11 }}>
+          <MonoDotLabel>Quick Capture · KI-Extraktion</MonoDotLabel>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 260,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 12px",
+              borderRadius: "var(--radius-input)",
+              background: "var(--sidebar-bg)",
+              border: "1px solid var(--border-strong)",
+              opacity: disableInput ? 0.6 : 1,
+            }}
+          >
+            {/* Mikro-Icon */}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 18 18"
+              fill="none"
+              stroke="var(--text-low)"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ flex: "none" }}
+            >
+              <path d="M9 2v9" />
+              <path d="M6 5a3 3 0 0 0 6 0" />
+              <rect x="6" y="11" width="6" height="5" rx="2" />
+            </svg>
+            <input
+              className="input"
+              type="text"
+              placeholder={"Mahlzeit beschreiben – z. B. „2 Eier, Vollkorntoast, schwarzer Kaffee“"}
               value={text}
               onChange={(e) => setText(e.target.value)}
               disabled={disableInput}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !submitting && !disableInput) handleSubmit();
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                fontSize: 13.5,
+                color: "var(--text-high)",
+              }}
             />
-            {error && <div className="settings-error">{error}</div>}
-            {!status?.is_valid && (
-              <div className="settings-error">
-                LLM Key fehlt oder ist ungültig. Bitte in den Settings testen &amp; speichern.
-              </div>
-            )}
           </div>
-          <div className="stack">
-            <label className="settings-label">Datum &amp; Zeit</label>
-            <div className="inline-fields">
-              <input
-                type="date"
-                className="input"
-                value={dateValue}
-                onChange={(e) => setDateValue(e.target.value)}
-              />
-              <label className="field-boolean">
-                <input
-                  type="checkbox"
-                  checked={useTimestamp}
-                  onChange={(e) => setUseTimestamp(e.target.checked)}
-                />
-                <span>Timestamp auf jetzt setzen</span>
-              </label>
-            </div>
-            <div className="inline-fields">
-              <button
-                className="button"
-                type="button"
-                onClick={handleSubmit}
-                disabled={submitting || disableInput}
-              >
-                {submitting ? "Wird verarbeitet..." : "LLM &amp; Drafts erstellen"}
-              </button>
-              <button className="button secondary" type="button" onClick={loadDrafts}>
-                Drafts refreshen
-              </button>
-            </div>
-          </div>
+          <Button onClick={handleSubmit} disabled={submitting || disableInput}>
+            {submitting ? "Wird verarbeitet…" : "Erfassen"}
+          </Button>
         </div>
-      </GlassCard>
 
-      <div className="grid-cards">
-        <GlassCard className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <span className="kicker">Drafts</span>
-              <h3 className="card-title">Extrahierte Items</h3>
-            </div>
-          </div>
-          {drafts.length === 0 ? (
-            <p className="muted">Keine Drafts vorhanden.</p>
-          ) : (
-            <div className="draft-grid">
-              {drafts.map((draft) => (
-                <div className="draft-card" key={draft.id}>
-                  <div className="draft-card__header">
-                    <div>
-                      <div className="kicker">{draft.type ?? "unbekannt"}</div>
-                      <h4 className="card-title">{draft.name ?? "Ohne Name"}</h4>
-                      <div className="muted small">{draft.raw_text}</div>
-                    </div>
-                    <div className="pill">{draft.status}</div>
-                  </div>
-                  <div className="metric-split">
-                    <div>
-                      <div className="metric-label">Kcal</div>
-                      <div className="metric-value">{formatNumber(draft.kcal)}</div>
-                    </div>
-                    <div>
-                      <div className="metric-label">Makros</div>
-                      <div className="muted small">
-                        C {formatNumber(draft.carbs_g, "g")} · F {formatNumber(draft.fat_g, "g")} ·
-                        P {formatNumber(draft.protein_g, "g")}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="metric-label">Zeit</div>
-                      <div className="muted small">
-                        {draft.date} {formatTime(draft.timestamp)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="inline-fields">
-                    <button className="button" onClick={() => acceptDraft(draft.id)} type="button">
-                      Accept
-                    </button>
-                    <button
-                      className="button tertiary"
-                      onClick={() => deleteDraft(draft.id)}
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </GlassCard>
+        {/* Schnell-Pills (Mahlzeit-Typ vorsetzen) */}
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          {QUICK_PILLS.map((pill) => (
+            <button
+              key={pill.type}
+              type="button"
+              onClick={() => applyQuickPill(pill.label)}
+              disabled={disableInput}
+              style={{
+                fontSize: 11.5,
+                color: "var(--soft)",
+                padding: "5px 11px",
+                borderRadius: "var(--radius-pill)",
+                background: "var(--nav-hover)",
+                border: "1px solid var(--border-strong)",
+                cursor: disableInput ? "not-allowed" : "pointer",
+                fontFamily: "'Space Grotesk', sans-serif",
+              }}
+            >
+              {pill.label}
+            </button>
+          ))}
+        </div>
 
-        <GlassCard className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <span className="kicker">Calories</span>
-              <h3 className="card-title">Stacked Tagesbalken</h3>
-            </div>
-            <div className="chart-controls">
-              {RANGE_OPTIONS.map((opt) => (
-                <button
-                  key={opt}
-                  className={`chip ${range === opt ? "is-active" : ""}`}
-                  onClick={() => setRange(opt)}
-                  type="button"
-                >
-                  {opt.toUpperCase()}
-                </button>
-              ))}
-            </div>
+        {/* Fehler-/LLM-Status */}
+        {error && (
+          <div className="settings-error" style={{ marginTop: 12 }}>
+            {error}
           </div>
-          {!summary || summary.days.length === 0 ? (
-            <p className="muted">Keine gespeicherten Einträge im Zeitraum.</p>
-          ) : (
-            <>
-              <div className="legend">
-                {Object.entries(TYPE_COLORS).map(([key, color]) => (
-                  <span key={key} className="legend-item">
-                    <span className="legend-dot" style={{ background: color }} aria-hidden />
-                    {TYPE_LABELS[key] ?? key}
-                  </span>
-                ))}
-              </div>
-              <div className="stacked-bars">
-                {summary.days.map((day) => (
-                  <PercentBar
-                    key={day.date}
-                    day={day}
-                    maxKcal={maxKcal}
-                    onSelect={(d) => {
-                      setSelectedDay(d);
-                      loadDayEntries(d);
-                    }}
-                    selected={selectedDay === day.date}
-                  />
-                ))}
-              </div>
-              <div className="metric-split">
-                <div>
-                  <div className="metric-label">Totals</div>
-                  <div className="metric-value">{formatNumber(summary.totals.kcal)} kcal</div>
-                </div>
-                <div>
-                  <div className="metric-label">Makros</div>
-                  <div className="muted small">
-                    C {formatNumber(summary.totals.carbs_g, "g")} · F{" "}
-                    {formatNumber(summary.totals.fat_g, "g")} · P{" "}
-                    {formatNumber(summary.totals.protein_g, "g")}
-                  </div>
-                </div>
-                <div>
-                  <div className="metric-label">Caffeine</div>
-                  <div className="muted small">{formatNumber(summary.totals.caffeine_mg, "mg")}</div>
-                </div>
-              </div>
-            </>
-          )}
-        </GlassCard>
+        )}
+        {status && !status.is_valid && (
+          <div className="settings-error" style={{ marginTop: 12 }}>
+            LLM Key fehlt oder ist ungültig. Bitte in den Settings testen &amp; speichern.
+          </div>
+        )}
       </div>
 
-      {selectedDay && (
-        <GlassCard className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <span className="kicker">Entries</span>
-              <h3 className="card-title">Items am {formatDate(selectedDay)}</h3>
-            </div>
-            <button className="button tertiary" onClick={() => setSelectedDay(null)} type="button">
-              Schließen
-            </button>
-          </div>
-          {dayEntries.length === 0 ? (
-            <p className="muted">Keine Einträge für diesen Tag.</p>
+      {/* ── Heute-Summary ──────────────────────────────────────────────────────── */}
+      <SectionHeader label="Heute" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(195px, 1fr))", gap: 14 }}>
+        {/* Aufgenommen (Amber) */}
+        <StatCard eyebrow="Aufgenommen" value={formatKcal(intakeToday)} unit="kcal" accent="var(--amber)">
+          <ProgressBar value={intakePct} from="var(--amber)" to="var(--amber-bright)" />
+          <Caption>
+            Ziel {formatKcal(DAILY_GOAL)} · {Math.round(intakePct)} %
+          </Caption>
+        </StatCard>
+
+        {/* Verbrannt (Indigo) ── keine Burn-Daten im Calories-Modul */}
+        <StatCard eyebrow="Verbrannt" value="–" unit="kcal" accent="var(--indigo)">
+          <Caption>Keine Burn-Daten in diesem Modul</Caption>
+        </StatCard>
+
+        {/* Bilanz (Green) ── Aufnahme gegen Tagesziel */}
+        <StatCard
+          eyebrow="Bilanz"
+          value={formatSignedKcal(balanceToday)}
+          unit="kcal"
+          accent="var(--green)"
+          delta={{ text: balanceLabel, tone: balanceTone }}
+        >
+          <Caption>
+            {balanceToday < 0 ? "Im Zielkorridor" : "Gegen Tagesziel"}
+          </Caption>
+        </StatCard>
+
+        {/* Ø 7 Tage (Teal) */}
+        <StatCard eyebrow="Ø Zeitraum" value={avgIntake == null ? "–" : formatKcal(avgIntake)} unit="kcal" accent="var(--teal)">
+          <Caption>Aufnahme pro Tag</Caption>
+        </StatCard>
+      </div>
+
+      {/* ── Verlauf (2 Charts) ─────────────────────────────────────────────────── */}
+      <SectionHeader label="Verlauf" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16 }}>
+        {/* Kalorienuebersicht ── gestapelte Mahlzeit-Typen + Intake-Linie */}
+        <ChartPanel
+          title="Kalorienübersicht"
+          right={
+            <>
+              {presentTypes.map((t) => (
+                <LegendItem key={t} color={TYPE_COLORS[t] ?? CHART_COLORS.indigo} label={TYPE_LABELS[t] ?? t} />
+              ))}
+              <LegendItem color={CHART_COLORS.teal} label="Intake" line />
+            </>
+          }
+        >
+          {stackData.length ? (
+            <StackedBarLineChart
+              data={stackData}
+              xKey="x"
+              bars={presentTypes.map((t) => ({
+                dataKey: t,
+                name: TYPE_LABELS[t] ?? t,
+                color: TYPE_COLORS[t] ?? CHART_COLORS.indigo,
+              }))}
+              line={{ dataKey: "intake", name: "Intake", color: CHART_COLORS.teal }}
+              height={210}
+              valueFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)}
+            />
           ) : (
-            <div className="table">
-              <div className="table-head">
-                <div>Name</div>
-                <div>Kcal</div>
-                <div>Makros</div>
-                <div>Status</div>
-                <div />
-              </div>
-              {dayEntries.map((entry) => (
-                <div className="table-row" key={entry.id}>
-                  <div>
-                    <div className="card-title small">{entry.name ?? "Ohne Name"}</div>
-                    <div className="muted small">{entry.raw_text}</div>
+            <EmptyChart />
+          )}
+        </ChartPanel>
+
+        {/* Aufnahme vs. Ziel ── Amber-Flaeche+Linie + Ziel (gestrichelt, Text-Low) */}
+        <ChartPanel
+          title="Aufnahme vs. Ziel"
+          right={
+            <>
+              <LegendItem color={CHART_COLORS.amber} label="Intake" line />
+              <DashedLegendItem color={CHART_COLORS.textLow} label={`Ziel ${formatKcal(DAILY_GOAL)}`} />
+            </>
+          }
+        >
+          {goalData.length ? (
+            <LineAreaChart
+              data={goalData}
+              dataKey="intake"
+              xKey="x"
+              color={CHART_COLORS.amber}
+              height={210}
+              unit="kcal"
+              valueFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)}
+              referenceY={DAILY_GOAL}
+              referenceColor={CHART_COLORS.textLow}
+            />
+          ) : (
+            <EmptyChart />
+          )}
+        </ChartPanel>
+      </div>
+
+      {/* ── Makros & Mahlzeiten ────────────────────────────────────────────────── */}
+      <SectionHeader label="Makros & Mahlzeiten" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16 }}>
+        {/* Makros heute ── gestapelter Balken + 3 Werte */}
+        <Card style={{ padding: "20px 22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-high)" }}>Makros heute</div>
+          <div style={{ display: "flex", height: 14, borderRadius: 7, overflow: "hidden", marginTop: 16, background: "var(--track)" }}>
+            <div style={{ width: `${macroPct(macrosToday.protein_g)}%`, background: CHART_COLORS.teal }} />
+            <div style={{ width: `${macroPct(macrosToday.carbs_g)}%`, background: CHART_COLORS.amber }} />
+            <div style={{ width: `${macroPct(macrosToday.fat_g)}%`, background: CHART_COLORS.coral }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, gap: 12 }}>
+            <MacroValue color={CHART_COLORS.teal} label="Protein" grams={macrosToday.protein_g} />
+            <MacroValue color={CHART_COLORS.amber} label="Carbs" grams={macrosToday.carbs_g} />
+            <MacroValue color={CHART_COLORS.coral} label="Fett" grams={macrosToday.fat_g} />
+          </div>
+          {macrosToday.caffeine_mg > 0 && (
+            <Caption>Koffein {formatNumber(macrosToday.caffeine_mg, " mg")}</Caption>
+          )}
+        </Card>
+
+        {/* Letzte Mahlzeiten ── Mono-Zeit | Beschreibung | kcal (Amber) */}
+        <Card style={{ padding: "20px 22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-high)", marginBottom: 14 }}>
+            Letzte Mahlzeiten
+          </div>
+          {recentMeals.length === 0 ? (
+            <p style={{ color: "var(--text-mid)", fontSize: 13 }}>Keine Mahlzeiten für diesen Tag.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {recentMeals.map((meal) => (
+                <div key={meal.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 11,
+                      color: "var(--text-low)",
+                      width: 44,
+                      flex: "none",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {meal.timestamp ? formatTime(meal.timestamp) : "—"}
+                  </span>
+                  <div style={{ flex: 1, fontSize: 13, color: "var(--soft)" }}>
+                    {meal.name ?? meal.raw_text}
                   </div>
-                  <div>{formatNumber(entry.kcal)}</div>
-                  <div className="muted small">
-                    C {formatNumber(entry.carbs_g, "g")} · F {formatNumber(entry.fat_g, "g")} · P{" "}
-                    {formatNumber(entry.protein_g, "g")}
-                  </div>
-                  <div className="pill">
-                    {entry.status} / {entry.source}
-                  </div>
-                  <div>
-                    <button
-                      className="button tertiary"
-                      type="button"
-                      onClick={() => deleteEntry(entry.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  <span
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 12.5,
+                      color: "var(--amber)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatNumber(meal.kcal)}
+                  </span>
                 </div>
               ))}
             </div>
           )}
-        </GlassCard>
-      )}
+        </Card>
+      </div>
 
-      <div className="grid-cards">
-        <GlassCard className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <span className="kicker">Vape</span>
-              <h3 className="card-title">Deltas &amp; Coil Changes</h3>
-            </div>
-            <div className="inline-fields">
-              <input
-                className="input"
-                type="number"
-                placeholder="Aktueller Counter"
-                value={vapeCounter}
-                onChange={(e) => setVapeCounter(e.target.value)}
-              />
-              <button className="button" type="button" onClick={submitVape}>
-                Speichern
-              </button>
-            </div>
-          </div>
-          {!vapeSeries || vapeSeries.days.length === 0 ? (
-            <p className="muted">Noch keine Vape-Einträge vorhanden.</p>
-          ) : (
-            <>
-              <div className="legend">
-                <span className="legend-dot legend-dot--blue" aria-hidden /> Tages-Deltas
-                <span className="legend-dot legend-dot--red" aria-hidden /> Coil Change
-              </div>
-              <div className="vape-chart">
-                {vapeSeries.days.map((day) => (
-                  <VapeBar
-                    key={day.date}
-                    day={day}
-                    maxDelta={maxVapeDelta}
-                    average={vapeSeries.average}
-                  />
-                ))}
-              </div>
-              <div className="metric-split">
-                <div>
-                  <div className="metric-label">Average</div>
-                  <div className="metric-value">{formatNumber(vapeSeries.average)}</div>
-                </div>
-                <div>
-                  <div className="metric-label">Last Counter</div>
-                  <div className="muted small">
-                    {vapeSeries.latest?.counter ?? "–"} @{" "}
-                    {vapeSeries.latest ? formatTime(vapeSeries.latest.timestamp) : "–"}
+      {/* ════════════════════════════════════════════════════════════════════════
+           Bestandsfunktionen (Entscheidung 2): vollstaendig erhalten, neuer Look.
+         ════════════════════════════════════════════════════════════════════════ */}
+
+      {/* ── Draft-Review ───────────────────────────────────────────────────────── */}
+      <SectionHeader label="Entwürfe (KI-Extraktion)" />
+      <Card>
+        {drafts.length === 0 ? (
+          <p style={{ color: "var(--text-mid)", fontSize: 13 }}>Keine Entwürfe vorhanden.</p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+            {drafts.map((draft) => (
+              <div
+                key={draft.id}
+                style={{
+                  padding: 16,
+                  borderRadius: "var(--radius-card)",
+                  background: "var(--raised)",
+                  border: "1px solid var(--border)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div>
+                    <div
+                      style={{
+                        fontFamily: "'IBM Plex Mono', monospace",
+                        fontSize: 9.5,
+                        letterSpacing: "0.1em",
+                        color: "var(--text-low)",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {draft.type ? TYPE_LABELS[draft.type] ?? draft.type : "unbekannt"}
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-high)", marginTop: 4 }}>
+                      {draft.name ?? "Ohne Name"}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text-mid)", marginTop: 3 }}>{draft.raw_text}</div>
                   </div>
+                  <Badge tone="warning">{draft.status}</Badge>
                 </div>
-                <div>
-                  <div className="metric-label">Delta heute</div>
-                  <div className="muted small">{dailyDeltaToday ?? "–"}</div>
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                  <MiniMetric label="Kcal" value={formatNumber(draft.kcal)} />
+                  <MiniMetric
+                    label="Makros"
+                    value={`C ${formatNumber(draft.carbs_g, "g")} · F ${formatNumber(draft.fat_g, "g")} · P ${formatNumber(draft.protein_g, "g")}`}
+                  />
+                  <MiniMetric label="Zeit" value={`${draft.date} ${formatTime(draft.timestamp)}`.trim()} />
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <Button onClick={() => acceptDraft(draft.id)}>Übernehmen</Button>
+                  <Button variant="secondary" onClick={() => deleteDraft(draft.id)}>
+                    Verwerfen
+                  </Button>
                 </div>
               </div>
-              {vapeSeries.events.length > 0 && (
-                <div className="pill warning">
-                  Coil change detected: {vapeSeries.events.join(", ")}
-                </div>
-              )}
-            </>
-          )}
-        </GlassCard>
-
-        <GlassCard className="chart-panel">
-          <div className="chart-panel__header">
-            <div>
-              <span className="kicker">Imports</span>
-              <h3 className="card-title">JSON Upload</h3>
-            </div>
+            ))}
           </div>
-          <label className="manual-import__controls">
+        )}
+      </Card>
+
+      {/* ── Tagesbearbeitung ───────────────────────────────────────────────────── */}
+      <SectionHeader label="Tagesbearbeitung" />
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: selectedDay ? 14 : 0 }}>
+          <span style={{ fontSize: 13, color: "var(--text-mid)" }}>Tag wählen:</span>
+          <input
+            type="date"
+            className="input"
+            value={selectedDay ?? todayString()}
+            onChange={(e) => {
+              setSelectedDay(e.target.value);
+              loadDayEntries(e.target.value);
+            }}
+            style={{ width: "auto" }}
+          />
+          {selectedDay && (
+            <Button variant="secondary" onClick={() => setSelectedDay(null)}>
+              Schließen
+            </Button>
+          )}
+        </div>
+
+        {selectedDay &&
+          (dayEntries.length === 0 ? (
+            <p style={{ color: "var(--text-mid)", fontSize: 13 }}>
+              Keine Einträge für {formatDate(selectedDay)}.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {dayEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "12px 0",
+                    borderTop: "1px solid var(--row-divider)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, color: "var(--text-high)" }}>{entry.name ?? "Ohne Name"}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-mid)" }}>{entry.raw_text}</div>
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 12.5,
+                      color: "var(--amber)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatNumber(entry.kcal)}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--text-mid)", whiteSpace: "nowrap" }}>
+                    C {formatNumber(entry.carbs_g, "g")} · F {formatNumber(entry.fat_g, "g")} · P{" "}
+                    {formatNumber(entry.protein_g, "g")}
+                  </span>
+                  <Badge tone="neutral">
+                    {entry.status} / {entry.source}
+                  </Badge>
+                  <Button variant="secondary" onClick={() => deleteEntry(entry.id)}>
+                    Löschen
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ))}
+      </Card>
+
+      {/* ── Vape-Tracking ──────────────────────────────────────────────────────── */}
+      <SectionHeader label="Vape-Tracking" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+        {/* Counter-Logging + Kennzahlen */}
+        <Card>
+          <MonoDotLabel>Counter erfassen</MonoDotLabel>
+          <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+            <input
+              className="input"
+              type="number"
+              placeholder="Aktueller Counter"
+              value={vapeCounter}
+              onChange={(e) => setVapeCounter(e.target.value)}
+              style={{ flex: 1, minWidth: 160 }}
+            />
+            <Button onClick={submitVape}>Speichern</Button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
+            <MiniMetric label="Ø pro Tag" value={vapeSeries ? formatNumber(vapeSeries.average) : "–"} />
+            <MiniMetric
+              label="Letzter Stand"
+              value={
+                vapeSeries?.latest
+                  ? `${vapeSeries.latest.counter} @ ${formatTime(vapeSeries.latest.timestamp)}`
+                  : "–"
+              }
+            />
+            <MiniMetric label="Delta heute" value={dailyDeltaToday == null ? "–" : `${dailyDeltaToday}`} />
+          </div>
+          {vapeSeries && vapeSeries.events.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <Badge tone="warning">Coil-Wechsel: {vapeSeries.events.join(", ")}</Badge>
+            </div>
+          )}
+        </Card>
+
+        {/* Vape-Serie (Delta-Balken) */}
+        <ChartPanel title="Tages-Deltas" right={<LegendItem color={CHART_COLORS.teal} label="Delta" />}>
+          {vapeChartData.length ? (
+            <BarChart
+              data={vapeChartData}
+              dataKey="delta"
+              xKey="x"
+              color={CHART_COLORS.teal}
+              height={200}
+              valueFormatter={(v) => `${Math.round(v)}`}
+            />
+          ) : (
+            <p style={{ color: "var(--text-mid)", fontSize: 13, padding: "24px 0" }}>
+              Noch keine Vape-Einträge vorhanden.
+            </p>
+          )}
+        </ChartPanel>
+      </div>
+
+      {/* ── Importe ────────────────────────────────────────────────────────────── */}
+      <SectionHeader label="Importe" />
+      <Card>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          <MonoDotLabel>JSON-Upload</MonoDotLabel>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
             <input
               type="file"
               accept="application/json,.json"
               className="input"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (file) {
-                  handleImportFile(file);
-                }
+                if (file) handleImportFile(file);
                 event.target.value = "";
               }}
+              style={{ width: "auto" }}
             />
-            <span className="muted small">Lade ein Array von Entries hoch (JSON).</span>
+            <span style={{ fontSize: 12, color: "var(--text-mid)" }}>Array von Entries hochladen (JSON).</span>
           </label>
           {importError && <div className="settings-error">{importError}</div>}
-          <div className="table import-table">
-            <div className="table-head">
+        </div>
+
+        {imports.length === 0 ? (
+          <p style={{ color: "var(--text-mid)", fontSize: 13 }}>Noch keine Importe vorhanden.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "2fr 0.6fr 1.2fr",
+                gap: 14,
+                padding: "0 0 8px",
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 9.5,
+                letterSpacing: "0.1em",
+                color: "var(--text-low)",
+                textTransform: "uppercase",
+              }}
+            >
               <div>Batch</div>
               <div>Anzahl</div>
               <div>Zeitraum</div>
             </div>
-            {imports.length === 0 ? (
-              <div className="muted small">Noch keine Imports vorhanden.</div>
-            ) : (
-              imports.map((imp) => (
-                <div className="table-row" key={imp.import_batch_id}>
-                  <div className="card-title small">{imp.import_batch_id}</div>
-                  <div>{imp.count}</div>
-                  <div className="muted small">
-                    {imp.first_date ?? "?"} – {imp.last_date ?? "?"}
-                  </div>
+            {imports.map((imp) => (
+              <div
+                key={imp.import_batch_id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "2fr 0.6fr 1.2fr",
+                  gap: 14,
+                  padding: "10px 0",
+                  borderTop: "1px solid var(--row-divider)",
+                  alignItems: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: 12,
+                    color: "var(--text-high)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {imp.import_batch_id}
                 </div>
-              ))
-            )}
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, color: "var(--text-mid)" }}>
+                  {imp.count}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-mid)" }}>
+                  {imp.first_date ?? "?"} – {imp.last_date ?? "?"}
+                </div>
+              </div>
+            ))}
           </div>
-        </GlassCard>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ── Mini-Bausteine fuer Bestands-Sektionen ─────────────────────────────────────
+
+function MacroValue({ color, label, grams }: { color: string; label: string; grams: number }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ width: 9, height: 9, borderRadius: 2, background: color, flex: "none" }} />
+        <span style={{ fontSize: 12, color: "var(--text-mid)" }}>{label}</span>
       </div>
+      <div
+        style={{
+          fontFamily: "'IBM Plex Mono', monospace",
+          fontSize: 19,
+          fontWeight: 600,
+          color: "var(--text-high)",
+          marginTop: 5,
+        }}
+      >
+        {formatNumber(grams)} g
+      </div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontFamily: "'IBM Plex Mono', monospace",
+          fontSize: 9.5,
+          letterSpacing: "0.1em",
+          color: "var(--text-low)",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 13, color: "var(--soft)", marginTop: 5 }}>{value}</div>
     </div>
   );
 }

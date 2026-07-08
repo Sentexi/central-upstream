@@ -1,0 +1,14 @@
+{
+  "pkg": "central-upstream-frontend",
+  "globalName": "CentralUpstream",
+  "projectId": "49c8f5f7-27ff-4b14-aafb-be50390d5978",
+  "shape": "package",
+  "componentSrcMap": {
+    "GlassCard": "src/core/GlassCard.tsx"
+  },
+  "cssEntry": "src/index.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "dtsPropsFor": {
+    "GlassCard": "  /** Extra class names appended to the card's root `.glass-card` element. */\n  className?: string;\n  /** Render a colored glow ring around the card. */\n  glow?: boolean;\n  /** Glow accent when `glow` is true: \"low\" = blue, \"high\" = danger red. Default \"low\". */\n  stressLevel?: \"low\" | \"high\";\n  /** Card content. Rendered inside a vertical `.stack` flex wrapper. */\n  children?: React.ReactNode;"
+  }
+}

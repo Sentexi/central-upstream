@@ -72,24 +72,39 @@ export function HealthSyncHistory({ refreshKey }: HealthSyncHistoryProps) {
   }, [load, refreshKey]);
 
   if (loading && items.length === 0) {
-    return <div className="muted small">Historie wird geladen...</div>;
+    return (
+      <div className="settings-subsection">
+        <span className="settings-subsection__label">Sync Historie</span>
+        <span className="settings-field__help">Historie wird geladen...</span>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="settings-error">{error}</div>;
+    return (
+      <div className="settings-subsection">
+        <span className="settings-subsection__label">Sync Historie</span>
+        <div className="settings-error">{error}</div>
+      </div>
+    );
   }
 
   if (items.length === 0) {
-    return <div className="muted small">Noch keine Sync Versuche aufgezeichnet.</div>;
+    return (
+      <div className="settings-subsection">
+        <span className="settings-subsection__label">Sync Historie</span>
+        <span className="settings-field__help">Noch keine Sync Versuche aufgezeichnet.</span>
+      </div>
+    );
   }
 
   return (
-    <div className="health-history">
+    <div className="settings-subsection health-history">
       <div className="health-history__header">
-        <span className="settings-label">Sync Historie</span>
+        <span className="settings-subsection__label">Sync Historie</span>
         <button
           type="button"
-          className="button button-tertiary"
+          className="settings-chip"
           onClick={() => void load()}
           disabled={loading}
         >

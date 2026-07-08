@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -43,20 +43,44 @@ def _resolve_column(property_map: Dict[str, Dict[str, str]], candidates: List[st
     return None
 
 
-def _detect_done_statuses(repo: NotionRepository, status_col: Optional[str]) -> List[str]:
+def _classify_statuses(repo: NotionRepository, status_col: Optional[str]) -> Dict[str, List[str]]:
+    """Teile die vorhandenen Status-Werte in Klassen ein.
+
+    hidden: zaehlt nirgends, so als haette es den Task nie gegeben (Abandoned).
+    future: zaehlt nicht in den created/done Fluessen, bleibt aber im Open-Bestand.
+    done: abgeschlossene Tasks.
+
+    Die hidden/future Pruefung muss vor der done Pruefung laufen, weil die
+    Keyword-Erkennung per Substring arbeitet und z.B. "abandoned" das
+    Keyword "done" enthaelt.
+    """
+
+    classes: Dict[str, List[str]] = {"done": [], "hidden": [], "future": []}
     safe_col = repo.safe_column(status_col)
     if not safe_col:
-        return []
+        return classes
 
-    keywords = ["done", "complete", "closed", "finished", "resolved", "erledigt"]
+    done_keywords = ["done", "complete", "closed", "finished", "resolved", "erledigt"]
+    hidden_keywords = ["abandon"]
+    future_keywords = ["future"]
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper
         rows = conn.execute(
             f"SELECT DISTINCT {safe_col} AS status FROM notion_rows WHERE {safe_col} IS NOT NULL"
         ).fetchall()
 
-    statuses = [str(row["status"]) for row in rows if row["status"] is not None]
-    return [status for status in statuses if any(key in status.lower() for key in keywords)]
+    for row in rows:
+        if row["status"] is None:
+            continue
+        status = str(row["status"])
+        lowered = status.lower()
+        if any(key in lowered for key in hidden_keywords):
+            classes["hidden"].append(status)
+        elif any(key in lowered for key in future_keywords):
+            classes["future"].append(status)
+        elif any(key in lowered for key in done_keywords):
+            classes["done"].append(status)
+    return classes
 
 
 def _build_filters(args, property_map: Dict[str, Dict[str, str]]):
@@ -243,11 +267,30 @@ def get_stats():
             ["done_time", "completed_at", "done_at", "finished_at", "closed_at", "completed_on"],
         )
     )
-    completion_expr = completion_col or "last_edited_time"
+    if completion_col:
+        completion_expr = f"COALESCE({completion_col}, last_edited_time)"
+    else:
+        completion_expr = "last_edited_time"
     time_expr = f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper
-        done_statuses = _detect_done_statuses(repo, status_col)
+        status_classes = _classify_statuses(repo, status_col)
+        done_statuses = status_classes["done"]
+        hidden_statuses = status_classes["hidden"]
+        flow_excluded_statuses = status_classes["hidden"] + status_classes["future"]
+
+        def _status_not_in(statuses: List[str]) -> Tuple[str, List[str]]:
+            """WHERE-Fragment, das Zeilen mit einem dieser Status ausschliesst."""
+
+            if not status_col or not statuses:
+                return "", []
+            placeholders = ",".join(["?"] * len(statuses))
+            return (
+                f" AND ({status_col} IS NULL OR {status_col} NOT IN ({placeholders}))",
+                list(statuses),
+            )
+
+        flow_filter_sql, flow_filter_params = _status_not_in(flow_excluded_statuses)
 
         created_rows = conn.execute(
             f"""
@@ -257,9 +300,11 @@ def get_stats():
                 {time_expr} AS created_minutes
             FROM notion_rows
             WHERE created_time IS NOT NULL
+              AND archived = 0{flow_filter_sql}
             GROUP BY DATE(created_time)
             ORDER BY date
             """,
+            flow_filter_params,
         ).fetchall()
 
         completed_rows = []
@@ -270,6 +315,7 @@ def get_stats():
                 SELECT DATE({completion_expr}) AS date, COUNT(*) AS completed, {time_expr} AS completed_minutes
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
+                  AND archived = 0
                   AND {status_col} IN ({placeholders})
                 GROUP BY DATE({completion_expr})
                 ORDER BY date
@@ -278,14 +324,16 @@ def get_stats():
             ).fetchall()
 
         weekly_incoming_rows = conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-W%W', created_time) AS period, COUNT(*) AS incoming
             FROM notion_rows
             WHERE created_time IS NOT NULL
               AND created_time >= date('now', '-180 days')
+              AND archived = 0{flow_filter_sql}
             GROUP BY strftime('%Y-%W', created_time)
             ORDER BY period
-            """
+            """,
+            flow_filter_params,
         ).fetchall()
 
         weekly_completed_rows = []
@@ -297,8 +345,9 @@ def get_stats():
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
                   AND {completion_expr} >= date('now', '-180 days')
+                  AND archived = 0
                   AND {status_col} IN ({placeholders})
-                GROUP BY strftime('%Y-%W', {completion_expr})
+                GROUP BY strftime('%Y-W%W', {completion_expr})
                 ORDER BY period
                 """,
                 done_statuses,
@@ -306,11 +355,12 @@ def get_stats():
 
         workspace_expr = f"COALESCE({workspace_col}, 'Unassigned')" if workspace_col else "'Unassigned'"
         where_clauses = ["archived = 0"]
-        open_params = []
-        if status_col and done_statuses:
-            placeholders = ",".join(["?"] * len(done_statuses))
+        open_params: List[str] = []
+        open_excluded_statuses = done_statuses + hidden_statuses
+        if status_col and open_excluded_statuses:
+            placeholders = ",".join(["?"] * len(open_excluded_statuses))
             where_clauses.append(f"({status_col} NOT IN ({placeholders}) OR {status_col} IS NULL)")
-            open_params.extend(done_statuses)
+            open_params.extend(open_excluded_statuses)
         where_clause = " AND ".join(where_clauses)
 
         workspace_rows = conn.execute(
@@ -333,18 +383,20 @@ def get_stats():
         if status_col and done_statuses:
             placeholders = ",".join(["?"] * len(done_statuses))
             completed_count_row = conn.execute(
-                f"SELECT COUNT(*) AS cnt FROM notion_rows WHERE {status_col} IN ({placeholders})",
+                f"SELECT COUNT(*) AS cnt FROM notion_rows WHERE archived = 0 AND {status_col} IN ({placeholders})",
                 done_statuses,
             ).fetchone()
             completed_count = completed_count_row["cnt"] if completed_count_row else 0
 
         last7_incoming = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS cnt
             FROM notion_rows
             WHERE created_time IS NOT NULL
               AND created_time >= date('now', '-7 days')
-            """
+              AND archived = 0{flow_filter_sql}
+            """,
+            flow_filter_params,
         ).fetchone()
 
         last7_completed = 0
@@ -356,6 +408,7 @@ def get_stats():
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
                   AND {completion_expr} >= date('now', '-7 days')
+                  AND archived = 0
                   AND {status_col} IN ({placeholders})
                 """,
                 done_statuses,
@@ -363,17 +416,19 @@ def get_stats():
             last7_completed = last7_completed_row["cnt"] if last7_completed_row else 0
 
         creation_heatmap_rows = conn.execute(
-            """
+            f"""
             SELECT CAST(strftime('%w', created_time) AS INTEGER) AS weekday,
                    CAST(strftime('%H', created_time) AS INTEGER) AS hour,
                    COUNT(*) AS count
             FROM notion_rows
             WHERE created_time IS NOT NULL
               AND created_time >= date('now', '-120 days')
+              AND archived = 0{flow_filter_sql}
             GROUP BY CAST(strftime('%w', created_time) AS INTEGER),
                      CAST(strftime('%H', created_time) AS INTEGER)
             ORDER BY weekday, hour
-            """
+            """,
+            flow_filter_params,
         ).fetchall()
 
         completion_heatmap_rows: List[sqlite3.Row] = []
@@ -387,6 +442,7 @@ def get_stats():
                 FROM notion_rows
                 WHERE {completion_expr} IS NOT NULL
                   AND {completion_expr} >= date('now', '-120 days')
+                  AND archived = 0
                   AND {status_col} IN ({placeholders})
                 GROUP BY CAST(strftime('%w', {completion_expr}) AS INTEGER),
                          CAST(strftime('%H', {completion_expr}) AS INTEGER)

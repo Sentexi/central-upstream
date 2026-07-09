@@ -278,11 +278,11 @@ function ChartLegend({ minuteMode }: { minuteMode: boolean }) {
     <div style={{ display: "flex", gap: 13, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
         <span style={{ width: 9, height: 9, borderRadius: 2, background: CHART_COLORS.green, flexShrink: 0 }} />
-        Done{minuteMode ? " (Min.)" : ""}
+        Done{minuteMode ? " (geschätzte Min.)" : ""}
       </span>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
         <span style={{ width: 9, height: 9, borderRadius: 2, background: CHART_COLORS.coral, flexShrink: 0 }} />
-        Created{minuteMode ? " (Min.)" : ""}
+        Created{minuteMode ? " (geschätzte Min.)" : ""}
       </span>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-mid)" }}>
         <span style={{ width: 11, height: 2, borderRadius: 2, background: CHART_COLORS.amber, flexShrink: 0 }} />
@@ -659,9 +659,9 @@ export function NotionTaskDashboard() {
                       }}
                     >
                       <div>
-                        <div style={eyebrowStyle}>Aufwand (Minuten)</div>
+                        <div style={eyebrowStyle}>Erfüllungsaufwand (geschätzte Minuten)</div>
                         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-high)", marginTop: 2 }}>
-                          Geschätzter Aufwand &amp; Net-Flow
+                          Aufwand rein vs. raus &amp; Net-Flow
                         </div>
                       </div>
                       <ChartLegend minuteMode />

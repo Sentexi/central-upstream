@@ -46,7 +46,9 @@ def _resolve_column(property_map: Dict[str, Dict[str, str]], candidates: List[st
 def _classify_statuses(repo: NotionRepository, status_col: Optional[str]) -> Dict[str, List[str]]:
     """Teile die vorhandenen Status-Werte in Klassen ein.
 
-    hidden: zaehlt nirgends, so als haette es den Task nie gegeben (Abandoned).
+    hidden: zaehlt nirgends, so als haette es den Task nie gegeben
+    (Abandoned sowie der eigene Notion-Status Archived, der unabhaengig
+    vom Notion-Archiv-Flag existiert).
     future: zaehlt nicht in den created/done Fluessen, bleibt aber im Open-Bestand.
     done: abgeschlossene Tasks.
 
@@ -61,7 +63,7 @@ def _classify_statuses(repo: NotionRepository, status_col: Optional[str]) -> Dic
         return classes
 
     done_keywords = ["done", "complete", "closed", "finished", "resolved", "erledigt"]
-    hidden_keywords = ["abandon"]
+    hidden_keywords = ["abandon", "archiv"]
     future_keywords = ["future"]
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper

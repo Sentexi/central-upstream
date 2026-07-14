@@ -344,7 +344,7 @@ def test_stats_summary_geplant_getrennt_von_open(start_client):
     summary = payload["summary"]
     # offen sind plain, dump-started und dump-today, der zukunftstask nicht
     assert summary["open"] == 3
-    # aktiv (not started, in progress, recall) darf den geplanten
+    # aktiv (not started, in progress, recall, planning) darf den geplanten
     # "Not started" zukunftstask ebenfalls nicht mitzaehlen
     assert summary["open_active"] == 3
     assert summary["scheduled"] == 1
@@ -360,3 +360,59 @@ def test_stats_workspace_balken_ohne_geplante_tasks(start_client):
         entry["count"] for entry in payload["open_by_workspace"]
     )
     assert total_open_by_workspace == 3
+
+
+# --- KPI-Statuslisten ---------------------------------------------------------
+#
+# Die Kacheln "tatsaechlich offen" und "extern" zaehlen ueber feste
+# Statuslisten. Planning gehoert zu open_active, Backlog und Blocked
+# bleiben bewusst draussen (nur im Open-Bestand), Outbound und Callback
+# laufen als extern.
+
+
+@pytest.fixture()
+def status_client(tmp_path):
+    db_path = str(tmp_path / "notion_status.sqlite")
+    repo = NotionRepository(db_path)
+    repo.save_property_map(PROPERTY_MAP)
+    repo.ensure_wide_table(PROPERTY_MAP)
+    statuses = [
+        "Not started",
+        "In progress",
+        "Recall",
+        "Planning",
+        "Backlog",
+        "Blocked",
+        "Outbound",
+        "Callback",
+    ]
+    for idx, status in enumerate(statuses):
+        repo.upsert_row(
+            {
+                "id": f"task-{status.lower().replace(' ', '-')}",
+                "title": f"Task {status}",
+                "status": status,
+                "done_time": None,
+                "created_time": f"2026-06-{10 + idx:02d}T08:00:00.000+00:00",
+                "last_edited_time": f"2026-06-{10 + idx:02d}T08:00:00.000+00:00",
+                "estimated_time_min": 10,
+                "actual_time_min": None,
+                "archived": 0,
+            }
+        )
+
+    app = Flask(__name__)
+    app.config["NOTION_DB_PATH"] = db_path
+    app.register_blueprint(bp, url_prefix="/api/modules/notion")
+    return app.test_client()
+
+
+def test_stats_open_active_zaehlt_planning_mit(status_client):
+    payload = status_client.get("/api/modules/notion/stats").get_json()
+    summary = payload["summary"]
+    # not started, in progress, recall und planning
+    assert summary["open_active"] == 4
+    # outbound und callback
+    assert summary["open_outbound"] == 2
+    # backlog und blocked zaehlen nur im open bestand
+    assert summary["open"] == 8

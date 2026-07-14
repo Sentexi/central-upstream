@@ -69,6 +69,7 @@ export type TaskDashboardSummary = {
   open: number;
   open_active: number;
   open_outbound: number;
+  scheduled: number;
   completed: number;
   created: number;
   incoming_last_7d: number;

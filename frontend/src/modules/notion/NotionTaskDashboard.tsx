@@ -533,6 +533,20 @@ export function NotionTaskDashboard() {
                   </div>
                 </div>
                 <div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-low)" }}>Geplant</div>
+                  <div
+                    style={{
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontSize: 18,
+                      fontWeight: 600,
+                      color: "var(--text-mid)",
+                      marginTop: 2,
+                    }}
+                  >
+                    {formatNumber(stats.summary.scheduled ?? 0)}
+                  </div>
+                </div>
+                <div>
                   <div style={{ fontSize: 10.5, color: "var(--text-low)" }}>Gesamt</div>
                   <div
                     style={{

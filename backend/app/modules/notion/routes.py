@@ -273,6 +273,24 @@ def get_stats():
         completion_expr = f"COALESCE({completion_col}, last_edited_time)"
     else:
         completion_expr = "last_edited_time"
+    start_col = repo.safe_column(_resolve_column(property_map, ["start", "start_date"]))
+    if start_col:
+        # Zufluss folgt dem Startdatum, Anlage-Datum nur als Fallback. Wird ein
+        # Task vor seinem Start erledigt, deckelt done_time den Zufluss auf den
+        # Erledigungstag, sonst laege der Abfluss vor dem Zufluss. Bewusst nur
+        # done_time und nicht completion_expr, weil der last_edited-Fallback
+        # sonst jeden offenen Zukunftstask sofort einfliessen liesse.
+        inflow_base = f"COALESCE({start_col}, created_time)"
+        if completion_col:
+            inflow_expr = (
+                f"CASE WHEN {completion_col} IS NOT NULL "
+                f"AND DATE({completion_col}) < DATE({inflow_base}) "
+                f"THEN {completion_col} ELSE {inflow_base} END"
+            )
+        else:
+            inflow_expr = inflow_base
+    else:
+        inflow_expr = "created_time"
     time_expr = f"SUM(COALESCE({estimated_time_col}, 0))" if estimated_time_col else "0"
 
     with repo._connect() as conn:  # noqa: SLF001 - internal helper
@@ -297,13 +315,14 @@ def get_stats():
         created_rows = conn.execute(
             f"""
             SELECT
-                DATE(created_time) AS date,
+                DATE({inflow_expr}) AS date,
                 COUNT(*) AS created,
                 {time_expr} AS created_minutes
             FROM notion_rows
             WHERE created_time IS NOT NULL
+              AND DATE({inflow_expr}) <= DATE('now')
               AND archived = 0{flow_filter_sql}
-            GROUP BY DATE(created_time)
+            GROUP BY DATE({inflow_expr})
             ORDER BY date
             """,
             flow_filter_params,
@@ -327,12 +346,13 @@ def get_stats():
 
         weekly_incoming_rows = conn.execute(
             f"""
-            SELECT strftime('%Y-W%W', created_time) AS period, COUNT(*) AS incoming
+            SELECT strftime('%Y-W%W', {inflow_expr}) AS period, COUNT(*) AS incoming
             FROM notion_rows
             WHERE created_time IS NOT NULL
-              AND created_time >= date('now', '-180 days')
+              AND DATE({inflow_expr}) >= date('now', '-180 days')
+              AND DATE({inflow_expr}) <= DATE('now')
               AND archived = 0{flow_filter_sql}
-            GROUP BY strftime('%Y-%W', created_time)
+            GROUP BY strftime('%Y-W%W', {inflow_expr})
             ORDER BY period
             """,
             flow_filter_params,
@@ -363,6 +383,9 @@ def get_stats():
             placeholders = ",".join(["?"] * len(open_excluded_statuses))
             where_clauses.append(f"({status_col} NOT IN ({placeholders}) OR {status_col} IS NULL)")
             open_params.extend(open_excluded_statuses)
+        if start_col:
+            # Zukunftsstarts sind noch keine Belastung, sie laufen als "Geplant".
+            where_clauses.append(f"({start_col} IS NULL OR DATE({start_col}) <= DATE('now'))")
         where_clause = " AND ".join(where_clauses)
 
         workspace_rows = conn.execute(
@@ -381,6 +404,21 @@ def get_stats():
             f"SELECT COUNT(*) AS cnt FROM notion_rows WHERE {where_clause}", open_params
         ).fetchone()
 
+        scheduled_count = 0
+        if start_col:
+            scheduled_filter_sql, scheduled_params = _status_not_in(open_excluded_statuses)
+            scheduled_row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS cnt
+                FROM notion_rows
+                WHERE archived = 0
+                  AND {start_col} IS NOT NULL
+                  AND DATE({start_col}) > DATE('now'){scheduled_filter_sql}
+                """,
+                scheduled_params,
+            ).fetchone()
+            scheduled_count = scheduled_row["cnt"] if scheduled_row else 0
+
         completed_count = 0
         if status_col and done_statuses:
             placeholders = ",".join(["?"] * len(done_statuses))
@@ -395,7 +433,8 @@ def get_stats():
             SELECT COUNT(*) AS cnt
             FROM notion_rows
             WHERE created_time IS NOT NULL
-              AND created_time >= date('now', '-7 days')
+              AND DATE({inflow_expr}) >= date('now', '-7 days')
+              AND DATE({inflow_expr}) <= DATE('now')
               AND archived = 0{flow_filter_sql}
             """,
             flow_filter_params,
@@ -457,12 +496,17 @@ def get_stats():
             if not status_col or not status_values:
                 return 0
             placeholders = ",".join(["?"] * len(status_values))
+            start_filter = (
+                f" AND ({start_col} IS NULL OR DATE({start_col}) <= DATE('now'))"
+                if start_col
+                else ""
+            )
             row = conn.execute(
                 f"""
                 SELECT COUNT(*) AS cnt
                 FROM notion_rows
                 WHERE archived = 0
-                  AND LOWER({status_col}) IN ({placeholders})
+                  AND LOWER({status_col}) IN ({placeholders}){start_filter}
                 """,
                 [value.lower() for value in status_values],
             ).fetchone()
@@ -513,6 +557,7 @@ def get_stats():
                 "open": open_count_row["cnt"] if open_count_row else 0,
                 "open_active": open_active_count,
                 "open_outbound": open_outbound_count,
+                "scheduled": scheduled_count,
                 "completed": completed_count,
                 "created": created_total,
                 "incoming_last_7d": last7_incoming["cnt"] if last7_incoming else 0,

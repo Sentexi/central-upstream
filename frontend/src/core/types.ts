@@ -4,7 +4,8 @@ export type ModuleSlot =
   | "dashboard_view"
   | "health_view"
   | "fitness_view"
-  | "calories_view";
+  | "calories_view"
+  | "vape_tracker_view";
 
 export interface ModuleManifest {
   id: string;
@@ -23,6 +24,7 @@ export interface ModuleFrontend {
   HealthWidget?: React.ComponentType;
   FitnessWidget?: React.ComponentType;
   CaloriesWidget?: React.ComponentType;
+  VapeTrackerWidget?: React.ComponentType;
 }
 
 export type SettingsFieldType = "string" | "password" | "boolean" | "select" | "file";

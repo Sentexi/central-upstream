@@ -13,7 +13,6 @@ import type { SegmentedControlOption } from "../../core/ui";
 import {
   StackedBarLineChart,
   LineAreaChart,
-  BarChart,
   CHART_COLORS,
 } from "../../core/charts";
 
@@ -84,15 +83,6 @@ type SummaryResponse = {
   days: SummaryDay[];
   totals: SummaryDay["macros"] & { kcal: number };
   range: { date_from: string; date_to: string };
-};
-
-type VapeDay = { date: string; delta: number; coil_change?: boolean };
-type VapeSeries = {
-  days: VapeDay[];
-  total: number;
-  average: number;
-  events: string[];
-  latest: { counter: number; timestamp: string } | null;
 };
 
 type ImportBatch = {
@@ -252,8 +242,6 @@ export function CaloriesView() {
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [vapeCounter, setVapeCounter] = useState("");
-  const [vapeSeries, setVapeSeries] = useState<VapeSeries | null>(null);
   const [imports, setImports] = useState<ImportBatch[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
 
@@ -290,16 +278,6 @@ export function CaloriesView() {
     }
   };
 
-  const loadVape = async (nextRange = range) => {
-    try {
-      const res = await fetch(`/api/vape/series?range=${nextRange}`);
-      const data = await res.json();
-      setVapeSeries(data);
-    } catch (err) {
-      console.error("Failed to load vape series", err);
-    }
-  };
-
   const loadImports = async () => {
     try {
       const res = await fetch("/api/calories/imports?limit=5");
@@ -326,14 +304,12 @@ export function CaloriesView() {
     loadStatus();
     loadDrafts();
     loadSummary();
-    loadVape();
     loadImports();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     loadSummary(range);
-    loadVape(range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
@@ -413,21 +389,6 @@ export function CaloriesView() {
     }
   };
 
-  const submitVape = async () => {
-    if (!vapeCounter) return;
-    try {
-      await fetch("/api/vape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ counter: Number(vapeCounter) }),
-      });
-      setVapeCounter("");
-      loadVape();
-    } catch (err) {
-      console.error("Vape submit failed", err);
-    }
-  };
-
   // ── Abgeleitete Werte ─────────────────────────────────────────────────────────
 
   const days = summary?.days ?? [];
@@ -499,16 +460,6 @@ export function CaloriesView() {
       mounted = false;
     };
   }, [todayDay?.date]);
-
-  // Vape-Chart-Daten (Delta-Balken).
-  const vapeChartData = useMemo(
-    () => (vapeSeries?.days ?? []).map((d) => ({ x: shortDate(d.date), delta: d.delta })),
-    [vapeSeries],
-  );
-  const dailyDeltaToday = useMemo(() => {
-    const today = todayString();
-    return vapeSeries?.days.find((d) => d.date === today)?.delta ?? null;
-  }, [vapeSeries]);
 
   // Burn ist in diesem Modul nicht verfuegbar -> Bilanz gegen Tagesziel.
   const balanceTone: "pos" | "neg" | "neutral" =
@@ -928,61 +879,6 @@ export function CaloriesView() {
             </div>
           ))}
       </Card>
-
-      {/* ── Vape-Tracking ──────────────────────────────────────────────────────── */}
-      <SectionHeader label="Vape-Tracking" />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
-        {/* Counter-Logging + Kennzahlen */}
-        <Card>
-          <MonoDotLabel>Counter erfassen</MonoDotLabel>
-          <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-            <input
-              className="input"
-              type="number"
-              placeholder="Aktueller Counter"
-              value={vapeCounter}
-              onChange={(e) => setVapeCounter(e.target.value)}
-              style={{ flex: 1, minWidth: 160 }}
-            />
-            <Button onClick={submitVape}>Speichern</Button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
-            <MiniMetric label="Ø pro Tag" value={vapeSeries ? formatNumber(vapeSeries.average) : "–"} />
-            <MiniMetric
-              label="Letzter Stand"
-              value={
-                vapeSeries?.latest
-                  ? `${vapeSeries.latest.counter} @ ${formatTime(vapeSeries.latest.timestamp)}`
-                  : "–"
-              }
-            />
-            <MiniMetric label="Delta heute" value={dailyDeltaToday == null ? "–" : `${dailyDeltaToday}`} />
-          </div>
-          {vapeSeries && vapeSeries.events.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <Badge tone="warning">Coil-Wechsel: {vapeSeries.events.join(", ")}</Badge>
-            </div>
-          )}
-        </Card>
-
-        {/* Vape-Serie (Delta-Balken) */}
-        <ChartPanel title="Tages-Deltas" right={<LegendItem color={CHART_COLORS.teal} label="Delta" />}>
-          {vapeChartData.length ? (
-            <BarChart
-              data={vapeChartData}
-              dataKey="delta"
-              xKey="x"
-              color={CHART_COLORS.teal}
-              height={200}
-              valueFormatter={(v) => `${Math.round(v)}`}
-            />
-          ) : (
-            <p style={{ color: "var(--text-mid)", fontSize: 13, padding: "24px 0" }}>
-              Noch keine Vape-Einträge vorhanden.
-            </p>
-          )}
-        </ChartPanel>
-      </div>
 
       {/* ── Importe ────────────────────────────────────────────────────────────── */}
       <SectionHeader label="Importe" />

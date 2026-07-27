@@ -15,6 +15,7 @@ from typing import Any
 
 from ...core.sync_manager import BaseSyncManager, JobResult, SyncStateWriter
 from .repository import HealthRepository
+from .workout_repository import WorkoutRepository
 
 
 LEGACY_LOCK_FILENAME = "health.lock"
@@ -22,7 +23,12 @@ LEGACY_SYNC_STATUS_FILENAME = "sync_status.json"
 
 
 class HealthSyncManager(BaseSyncManager):
-    def __init__(self, repo: HealthRepository, app):
+    def __init__(
+        self,
+        repo: HealthRepository,
+        app,
+        workout_repo: WorkoutRepository | None = None,
+    ):
         super().__init__(
             db_path=repo.db_path,
             app=app,
@@ -30,6 +36,7 @@ class HealthSyncManager(BaseSyncManager):
             table_history="health_sync_history",
         )
         self._repo = repo
+        self._workout_repo = workout_repo or WorkoutRepository(repo.db_path)
         self._migrate_legacy_lock_files()
 
     # --- Public entrypoint -------------------------------------------------
@@ -130,13 +137,57 @@ class HealthSyncManager(BaseSyncManager):
         def _on_progress(processed_count: int):
             state_writer.set_progress(processed_count)
 
-        stats = self._repo.ingest_records(
-            normalized,
-            batch_ts=state_writer.batch_timestamp,
-            progress_callback=_on_progress,
-            replace_existing=replace_existing,
-        )
-        self._repo.remove_duplicate_rows()
+        workout_records = [
+            record
+            for record in normalized
+            if record.data_type.casefold() == "workouts"
+        ]
+        generic_records = [
+            record
+            for record in normalized
+            if record.data_type.casefold() != "workouts"
+        ]
+
+        stats = {
+            "inserted": 0,
+            "skipped": 0,
+            "by_type": {},
+        }
+        if generic_records:
+            generic_stats = self._repo.ingest_records(
+                generic_records,
+                batch_ts=state_writer.batch_timestamp,
+                progress_callback=_on_progress,
+                replace_existing=replace_existing,
+            )
+            stats["inserted"] += generic_stats["inserted"]
+            stats["skipped"] += generic_stats["skipped"]
+            stats["by_type"].update(generic_stats["by_type"])
+            self._repo.remove_duplicate_rows()
+
+        if workout_records:
+            generic_count = len(generic_records)
+
+            def _on_workout_progress(processed_count: int):
+                state_writer.set_progress(generic_count + processed_count)
+
+            workout_stats = self._workout_repo.ingest_records(
+                workout_records,
+                batch_ts=state_writer.batch_timestamp,
+                progress_callback=_on_workout_progress,
+            )
+            stats["inserted"] += workout_stats["inserted"]
+            stats["skipped"] += workout_stats["skipped"]
+            stats["by_type"].update(workout_stats["by_type"])
+
+        # Keep the legacy metadata fallback current even for workout-only
+        # payloads, which deliberately bypass the generic table-per-type store.
+        if not generic_records:
+            self._repo.ingest_records(
+                [],
+                batch_ts=state_writer.batch_timestamp,
+                replace_existing=False,
+            )
 
         _archive_payload(payload_path)
 

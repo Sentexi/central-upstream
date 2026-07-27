@@ -66,6 +66,16 @@ def _get_repository() -> HealthRepository:
     return repo
 
 
+def _get_workout_repository():
+    repo = current_app.extensions.get("health_workout_repo")  # type: ignore[attr-defined]
+    if repo is None:
+        from .workout_repository import WorkoutRepository
+
+        repo = WorkoutRepository(_get_db_path())
+        current_app.extensions["health_workout_repo"] = repo
+    return repo
+
+
 def _get_sync_manager():
     manager = current_app.extensions.get("health_sync_manager")  # type: ignore[attr-defined]
     if manager is None:
@@ -73,7 +83,11 @@ def _get_sync_manager():
         # creation mirrors the eager path in module.init_app.
         from .sync_manager import HealthSyncManager
 
-        manager = HealthSyncManager(repo=_get_repository(), app=current_app._get_current_object())
+        manager = HealthSyncManager(
+            repo=_get_repository(),
+            workout_repo=_get_workout_repository(),
+            app=current_app._get_current_object(),
+        )
         current_app.extensions["health_sync_manager"] = manager
     return manager
 
@@ -1245,4 +1259,22 @@ def fitness_dashboard():
         weekly_series_full[-12:],
         baseline_daily,
     )
+    return jsonify(payload)
+
+
+@bp.get("/workouts/overview")
+def workout_overview():
+    range_key = request.args.get("range", "all").lower()
+    if range_key not in {"90d", "1y", "all"}:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "Ungueltiger Zeitraum. Erlaubt sind 90d, 1y und all.",
+                }
+            ),
+            400,
+        )
+
+    payload = _get_workout_repository().get_overview(range_key)
     return jsonify(payload)

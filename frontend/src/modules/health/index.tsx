@@ -1,10 +1,10 @@
 import type { ModuleFrontend } from "../../core/types";
 import { EnergyMonitorView } from "./EnergyMonitorView";
-import { FitnessDashboardView } from "./FitnessDashboardView";
+import { FitnessModuleView } from "./FitnessModuleView";
 
 export const moduleFrontend: ModuleFrontend = {
   id: "health",
   slots: ["health_view", "fitness_view"],
   HealthWidget: EnergyMonitorView,
-  FitnessWidget: FitnessDashboardView,
+  FitnessWidget: FitnessModuleView,
 };

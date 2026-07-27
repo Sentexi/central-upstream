@@ -130,6 +130,98 @@ export async function fetchFitnessDashboard(range: RangeKey, group: GroupKey = "
   return res.json();
 }
 
+export type WorkoutRangeKey = "90d" | "1y" | "all";
+export type WorkoutSportType =
+  | "running"
+  | "walking"
+  | "swimming"
+  | "strength"
+  | "cycling"
+  | "other";
+
+export interface WorkoutSportSummary {
+  sport_type: WorkoutSportType;
+  label: string;
+  workout_count: number;
+  total_duration_minutes: number | null;
+  total_distance_km: number | null;
+  last_workout_at: string;
+  workout_names: string[];
+}
+
+export interface WorkoutSummary {
+  id: number;
+  external_id: string;
+  name: string;
+  start_at: string;
+  duration_seconds: number | null;
+  distance_km: number | null;
+  pace_seconds_per_km: number | null;
+  avg_heart_rate: number | null;
+  location: string | null;
+  has_heart_rate: boolean;
+  has_route: boolean;
+}
+
+export interface WorkoutPhase {
+  id: string;
+  label: string;
+  start_at: string;
+  end_at: string;
+  gap_before_days: number | null;
+  is_current: boolean;
+  workout_count: number;
+  total_distance_km: number | null;
+  median_pace_seconds_per_km: number | null;
+  median_heart_rate: number | null;
+  workouts: WorkoutSummary[];
+}
+
+export interface WorkoutDistanceClass {
+  key: "short" | "typical" | "extended" | "long" | "very_long";
+  label: string;
+  workout_count: number;
+  median_pace_seconds_per_km: number | null;
+  trend_seconds_per_km: number | null;
+  total_distance_km: number;
+}
+
+export interface WorkoutOverviewResponse {
+  range: WorkoutRangeKey;
+  sports: WorkoutSportSummary[];
+  running: {
+    available: boolean;
+    workout_count: number;
+    summary: {
+      current_phase_workouts: number;
+      current_phase_start_at: string | null;
+      typical_distance_km: number | null;
+      total_distance_km: number | null;
+      median_pace_seconds_per_km: number | null;
+      last_workout_at: string | null;
+    };
+    phases: WorkoutPhase[];
+    distance_classes: WorkoutDistanceClass[];
+    recent_workouts: WorkoutSummary[];
+  };
+  data_quality: {
+    workout_count: number;
+    with_distance: number;
+    with_heart_rate: number;
+    with_route: number;
+  };
+}
+
+export async function fetchWorkoutOverview(
+  range: WorkoutRangeKey = "all",
+): Promise<WorkoutOverviewResponse> {
+  const res = await fetch(`/api/health/workouts/overview?range=${range}`);
+  if (!res.ok) {
+    throw new Error("Konnte Workout Overview nicht laden");
+  }
+  return res.json();
+}
+
 export type SyncFinalState = "done" | "error" | "aborted";
 
 export interface SyncHistoryItem {

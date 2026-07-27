@@ -258,7 +258,11 @@ function EmptyChart() {
 
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 
-export function FitnessDashboardView() {
+export function FitnessDashboardView({
+  navigation,
+}: {
+  navigation?: React.ReactNode;
+}) {
   const [range, setRange] = useState<RangeKey>("7d");
   const [group, setGroup] = useState<GroupKey>("daily");
   const [data, setData] = useState<FitnessDashboardResponse | null>(null);
@@ -402,6 +406,7 @@ export function FitnessDashboardView() {
         subtitle="Weekly Volume, Consistency, Efficiency-Proxy und Mobility-Trends."
         right={
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {navigation}
             <SegmentedControl
               options={RANGE_OPTIONS}
               value={range}

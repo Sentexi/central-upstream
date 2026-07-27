@@ -47,6 +47,27 @@ Das Health-Modul liefert in seinem Settings-Schema zusätzlich einen \`manual_im
 - \`help_text\` / \`upload_hint\`: kurze Hinweise für die UI
 - \`success_message\` / \`error_message\`: optionale Texte für Upload-Feedback
 
+### Workout Overview (v0.3.6)
+
+Health Auto Export Workouts werden beim regulaeren Health Ingest in normalisierte
+Session Tabellen geschrieben. Die Workout ID ist der stabile Schluessel. Ein
+erneuter Export aktualisiert deshalb dieselbe Session, statt sie zu duplizieren.
+Herzfrequenz Samples und Routenpunkte liegen in kompakten Kindtabellen und werden
+nur ersetzt, wenn der neue Payload das jeweilige Array wirklich enthaelt.
+
+Die Fitness View enthaelt einen Umschalter zur Workout Overview. Jogging ist dort
+der Analysefokus. Gehen, Schwimmen, Krafttraining, Radfahren und weitere
+Workout Arten bleiben als tatsaechlich vorhandener Bestand sichtbar. Fehlende
+Distanz, Pace, Puls oder Route werden nicht durch Schaetzwerte ersetzt.
+
+Archivierte Payloads lassen sich einmalig und idempotent nachziehen:
+
+```
+flask --app backend.run_dev backfill-health-workouts
+```
+
+Ein abweichender Archivordner kann mit `--payload-dir` angegeben werden.
+
 # Linux (Ubuntu/Debian) – Install via GitHub Release Bundle
 
 sudo apt update

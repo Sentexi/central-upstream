@@ -7,6 +7,7 @@ import {
   Heart,
   Activity,
   Soup,
+  Wind,
   Settings as SettingsIcon,
   ChevronLeft,
   ChevronRight,
@@ -25,9 +26,18 @@ type WidgetKey =
   | "DashboardWidget"
   | "HealthWidget"
   | "FitnessWidget"
-  | "CaloriesWidget";
+  | "CaloriesWidget"
+  | "VapeTrackerWidget";
 
-type View = "today" | "work" | "dashboard" | "health" | "fitness" | "calories" | "settings";
+type View =
+  | "today"
+  | "work"
+  | "dashboard"
+  | "health"
+  | "fitness"
+  | "calories"
+  | "vape"
+  | "settings";
 type AuthStatus = "checking" | "unauthenticated" | "authenticated";
 
 type HealthSyncStatus = {
@@ -48,6 +58,7 @@ const NAV_ITEMS: NavConfig[] = [
   { view: "health", label: "Health", Icon: Heart },
   { view: "fitness", label: "Fitness", Icon: Activity },
   { view: "calories", label: "Calories", Icon: Soup },
+  { view: "vape", label: "Vape", Icon: Wind },
   { view: "settings", label: "Settings", Icon: SettingsIcon },
 ];
 
@@ -234,6 +245,7 @@ function App() {
   const healthWidgets = getWidgetsForSlot(activeModules, "health_view");
   const fitnessWidgets = getWidgetsForSlot(activeModules, "fitness_view");
   const caloriesWidgets = getWidgetsForSlot(activeModules, "calories_view");
+  const vapeTrackerWidgets = getWidgetsForSlot(activeModules, "vape_tracker_view");
 
   return (
     <div className={`app-shell ${isSidebarOpen ? "" : "sidebar-collapsed"}`.trim()}>
@@ -346,7 +358,16 @@ function App() {
               widgetKey="CaloriesWidget"
               emptyEyebrow="Kein Calories-Modul aktiv"
               emptyTitle="Aktiviere das Calories-Modul"
-              emptyHint="Hinterlege einen LLM-Key in den Settings, um Kalorien und Vape zu erfassen."
+              emptyHint="Hinterlege einen LLM-Key in den Settings, um Kalorien zu erfassen."
+            />
+          ) : view === "vape" ? (
+            <ModuleSlot
+              manifests={manifests}
+              widgets={vapeTrackerWidgets}
+              widgetKey="VapeTrackerWidget"
+              emptyEyebrow="Kein Vape Tracker aktiv"
+              emptyTitle="Aktiviere das Vape Tracker Modul"
+              emptyHint="Danach kannst du Counterstände und Coil Wechsel protokollieren."
             />
           ) : (
             <SettingsPage />

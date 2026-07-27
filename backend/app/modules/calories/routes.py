@@ -12,7 +12,6 @@ from flask import Blueprint, current_app, jsonify, request, g
 from ...core.settings_storage import settings_storage
 
 calories_bp = Blueprint("calories", __name__)
-vape_bp = Blueprint("vape", __name__)
 
 ALLOWED_TYPES = {"breakfast", "lunch", "dinner", "softdrink", "snack"}
 ALLOWED_STATUS = {"draft", "saved", "import"}
@@ -41,14 +40,6 @@ def _get_calories_db_path() -> str:
     path = current_app.config.get("CALORIES_DB_PATH")
     if not path:
         path = os.path.join(current_app.root_path, "data", "calories", "calories.db")
-    _ensure_dir(path)
-    return path
-
-
-def _get_vape_db_path() -> str:
-    path = current_app.config.get("VAPE_DB_PATH")
-    if not path:
-        path = os.path.join(current_app.root_path, "data", "vape", "vape.db")
     _ensure_dir(path)
     return path
 
@@ -96,26 +87,6 @@ def _ensure_calories_schema(conn: sqlite3.Connection):
     conn.commit()
 
 
-def _ensure_vape_schema(conn: sqlite3.Connection):
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS vape_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            counter INTEGER NOT NULL,
-            delta INTEGER NOT NULL,
-            note TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vape_entries_timestamp ON vape_entries(timestamp)"
-    )
-    conn.commit()
-
-
 def _get_calories_conn() -> sqlite3.Connection:
     conn = g.get("calories_db")
     if conn:
@@ -126,24 +97,8 @@ def _get_calories_conn() -> sqlite3.Connection:
     return conn
 
 
-def _get_vape_conn() -> sqlite3.Connection:
-    conn = g.get("vape_db")
-    if conn:
-        return conn
-    conn = _connect(_get_vape_db_path())
-    _ensure_vape_schema(conn)
-    g.vape_db = conn
-    return conn
-
-
 def close_calories_conn(_=None):
     conn = g.pop("calories_db", None)
-    if conn:
-        conn.close()
-
-
-def close_vape_conn(_=None):
-    conn = g.pop("vape_db", None)
     if conn:
         conn.close()
 
@@ -201,7 +156,7 @@ def _call_llm(api_key: str, text: str) -> Tuple[List[Dict[str, Any]], Optional[s
     model = current_app.config.get("CALORIES_LLM_MODEL", "gpt-4o-mini")
 
     system_prompt = (
-        "Parse the given food/beverage/vape text into JSON. "
+        "Parse the given food or beverage text into JSON. "
         "Respond with an object: {\"items\": [{\"name\": string, \"amount_g\": number?, "
         "\"kcal\": number?, \"carbs_g\": number?, \"fat_g\": number?, \"protein_g\": number?, "
         "\"caffeine_mg\": number?, \"type\": \"breakfast|lunch|dinner|softdrink|snack\"}], "
@@ -644,118 +599,3 @@ def list_import_batches():
         (limit,),
     ).fetchall()
     return jsonify({"imports": [_serialize_entry(r) for r in rows]})
-
-
-def _parse_timestamp(value: Any) -> datetime:
-    ts = _coerce_timestamp(value)
-    if ts:
-        return datetime.fromisoformat(ts)
-    return datetime.now(timezone.utc)
-
-
-@vape_bp.post("")
-def add_vape_entry():
-    payload = request.get_json(silent=True) or {}
-    if "counter" not in payload:
-        return jsonify({"ok": False, "error": "counter ist erforderlich"}), 400
-    try:
-        counter = int(payload.get("counter"))
-    except Exception:
-        return jsonify({"ok": False, "error": "counter muss eine Zahl sein"}), 400
-
-    ts = _parse_timestamp(payload.get("timestamp"))
-    ts_iso = ts.isoformat()
-    date_str = ts.date().isoformat()
-
-    conn = _get_vape_conn()
-    last = conn.execute(
-        "SELECT * FROM vape_entries ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
-
-    last_counter = last["counter"] if last else None
-    if last_counter is not None and counter >= last_counter:
-        delta = counter - last_counter
-        note = payload.get("note")
-    else:
-        delta = counter
-        note = payload.get("note") or "coil_change"
-
-    entry = {
-        "date": date_str,
-        "timestamp": ts_iso,
-        "counter": counter,
-        "delta": delta,
-        "note": note,
-        "created_at": _now_iso(),
-    }
-
-    with conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO vape_entries (date, timestamp, counter, delta, note, created_at)
-            VALUES (:date, :timestamp, :counter, :delta, :note, :created_at)
-            """,
-            entry,
-        )
-        entry["id"] = cursor.lastrowid
-
-    return jsonify({"ok": True, "entry": entry})
-
-
-@vape_bp.get("/latest")
-def latest_vape():
-    conn = _get_vape_conn()
-    row = conn.execute(
-        "SELECT * FROM vape_entries ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
-    if not row:
-        return jsonify({"ok": True, "latest": None})
-    return jsonify({"ok": True, "latest": _serialize_entry(row)})
-
-
-def _aggregate_vape_series(conn: sqlite3.Connection, date_from: str, date_to: str):
-    rows = conn.execute(
-        """
-        SELECT date, SUM(delta) AS delta, SUM(CASE WHEN note = 'coil_change' THEN 1 ELSE 0 END) AS coil_changes
-        FROM vape_entries
-        WHERE date BETWEEN ? AND ?
-        GROUP BY date
-        ORDER BY date ASC
-        """,
-        (date_from, date_to),
-    ).fetchall()
-
-    days = []
-    total = 0
-    events: List[str] = []
-    for row in rows:
-        delta = row["delta"] or 0
-        day = {"date": row["date"], "delta": delta, "coil_change": bool(row["coil_changes"])}
-        days.append(day)
-        total += delta
-        if row["coil_changes"]:
-            events.append(row["date"])
-
-    average = total / len(days) if days else 0
-    return days, total, average, events
-
-
-@vape_bp.get("/series")
-def vape_series():
-    date_from, date_to = _resolve_range()
-    conn = _get_vape_conn()
-    days, total, average, events = _aggregate_vape_series(conn, date_from, date_to)
-    latest_row = conn.execute(
-        "SELECT * FROM vape_entries ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
-
-    return jsonify(
-        {
-            "range": {"date_from": date_from, "date_to": date_to},
-            "days": days,
-            "total": total,
-            "average": average,
-            "events": events,
-            "latest": _serialize_entry(latest_row) if latest_row else None,
-        }
-    )

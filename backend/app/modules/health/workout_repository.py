@@ -83,6 +83,7 @@ def classify_sport(name: str, payload: Optional[dict] = None) -> str:
                 "laufen",
                 "lauftraining",
                 "laufband",
+                "ausfuhren",
             ),
         ),
         (
@@ -198,7 +199,41 @@ class WorkoutRepository:
                 );
                 """
             )
+            self._reclassify_other_sessions(conn)
             conn.commit()
+
+    @staticmethod
+    def _reclassify_other_sessions(conn: sqlite3.Connection) -> None:
+        """Revisit unknown sports when the classifier gains new definitions."""
+
+        rows = conn.execute(
+            """
+            SELECT id, name, raw_payload
+            FROM health_workout_sessions
+            WHERE sport_type = 'other'
+            """
+        ).fetchall()
+        updates = []
+        for row in rows:
+            try:
+                payload = json.loads(row["raw_payload"])
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            sport_type = classify_sport(row["name"], payload)
+            if sport_type != "other":
+                updates.append((sport_type, row["id"]))
+
+        conn.executemany(
+            """
+            UPDATE health_workout_sessions
+            SET sport_type = ?
+            WHERE id = ? AND sport_type = 'other'
+            """,
+            updates,
+        )
 
     def ingest_records(
         self,

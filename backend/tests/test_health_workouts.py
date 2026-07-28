@@ -85,6 +85,7 @@ def workout_repo(tmp_path):
     [
         ("Outdoor Run", "running"),
         ("Lauftraining", "running"),
+        ("Outdoor Ausf\u00fchren", "running"),
         ("Outdoor Spaziergang", "walking"),
         ("Pool Swimming", "swimming"),
         ("Funktionelles Krafttraining", "strength"),
@@ -153,6 +154,36 @@ def test_aelterer_import_ueberschreibt_neuere_workout_version_nicht(workout_repo
         assert conn.execute(
             "SELECT distance_meters FROM health_workout_sessions"
         ).fetchone()[0] == pytest.approx(5000)
+
+
+def test_schema_update_reklassifiziert_bisher_unbekannte_workouts(workout_repo):
+    start = datetime(2026, 7, 27, 18, 33, tzinfo=timezone.utc)
+    workout_repo.ingest_records(
+        [_record("run-localized", "Outdoor Ausf\u00fchren", start)],
+        batch_ts=100,
+    )
+    with sqlite3.connect(workout_repo.db_path) as conn:
+        conn.execute(
+            """
+            UPDATE health_workout_sessions
+            SET sport_type = 'other'
+            WHERE external_id = 'run-localized'
+            """
+        )
+
+    refreshed_repo = WorkoutRepository(workout_repo.db_path)
+
+    with sqlite3.connect(refreshed_repo.db_path) as conn:
+        assert conn.execute(
+            """
+            SELECT sport_type
+            FROM health_workout_sessions
+            WHERE external_id = 'run-localized'
+            """
+        ).fetchone()[0] == "running"
+    payload = refreshed_repo.get_overview("all")
+    assert payload["running"]["workout_count"] == 1
+    assert all(item["sport_type"] != "other" for item in payload["sports"])
 
 
 def test_overview_fokussiert_joggen_und_bildet_andere_workouts_ab(workout_repo):
